@@ -1,0 +1,16 @@
+[Unit]
+Description=Thanos - Scale-to-Zero for Docker Game Servers
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/thanos
+WorkingDirectory=/var/lib/thanos
+StateDirectory=thanos
+Restart=on-failure
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=multi-user.target

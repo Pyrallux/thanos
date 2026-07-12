@@ -1,0 +1,36 @@
+# Build artifacts
+/bin/
+*.exe
+thanos
+thanos.exe
+
+# SQLite database (contains credentials, tokens, config)
+thanos.db*
+*.db
+*.db-wal
+*.db-shm
+
+# Auto-generated docker-compose files (contains home server config)
+/docker/
+
+# Logs
+*.log
+
+# IDE / editor
+.vscode/
+.github/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key

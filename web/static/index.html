@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Thanos — Server Manager</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <!-- Login overlay (shown when not authenticated) -->
+    <div id="loginOverlay" class="login-overlay">
+      <div class="login-box">
+        <img
+          src="/icon"
+          alt="Thanos"
+          class="login-icon"
+          onerror="this.style.display = 'none'"
+        />
+        <h1>Thanos</h1>
+        <p class="login-subtitle">Sign in to manage your servers</p>
+        <label for="loginUser">Username</label>
+        <input id="loginUser" autocomplete="username" />
+        <label for="loginPass">Password</label>
+        <input id="loginPass" type="password" autocomplete="current-password" />
+        <button id="loginBtn">Sign In</button>
+        <p id="loginError" class="login-error"></p>
+      </div>
+    </div>
+
+    <!-- Main dashboard (shown when authenticated) -->
+    <div id="dashboard" class="dashboard-hidden">
+      <header>
+        <img
+          src="/thanos-icon.jpg"
+          alt="Thanos"
+          class="header-icon"
+          onerror="this.style.display = 'none'"
+        />
+        <div class="header-title-block">
+          <h1>Thanos</h1>
+          <span class="subtitle">Snap-to-Zero for Docker Game Servers</span>
+        </div>
+        <div class="header-actions">
+          <button id="refreshBtn" class="btn-icon" title="Refresh">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M14 2v4h-4" />
+              <path d="M2 14v-4h4" />
+              <path d="M13.5 6A6 6 0 0 0 3.5 4.5L2 6" />
+              <path d="M2.5 10A6 6 0 0 0 12.5 11.5L14 10" />
+            </svg>
+          </button>
+          <button id="settingsBtn" class="btn-icon" title="Settings">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M6.8 1h2.4l.3 1.8a4.8 4.8 0 0 1 1.1.6l1.7-.8 1.7 3-1.5 1a4.8 4.8 0 0 1 0 1.3l1.5 1-1.7 3-1.7-.8a4.8 4.8 0 0 1-1.1.6L9.2 15H6.8l-.3-1.8a4.8 4.8 0 0 1-1.1-.6l-1.7.8-1.7-3 1.5-1a4.8 4.8 0 0 1 0-1.3l-1.5-1 1.7-3 1.7.8a4.8 4.8 0 0 1 1.1-.6L6.8 1z"
+              />
+              <circle cx="8" cy="8" r="2" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <main>
+        <section id="containers">
+          <div class="loading">Loading containers...</div>
+        </section>
+        <button
+          id="addContainerBtn"
+          class="btn-add"
+          title="Manage Thanos labels on containers"
+        >
+          + Manage Containers
+        </button>
+      </main>
+
+      <!-- Label management modal -->
+      <div id="labelModal" class="modal-overlay">
+        <div class="modal-box">
+          <div class="modal-header">
+            <h2 id="modalTitle">Manage Thanos Labels</h2>
+            <button id="modalClose" class="modal-close">✕</button>
+          </div>
+          <div id="modalBody"></div>
+        </div>
+      </div>
+
+      <!-- Log/stats viewer modal -->
+      <div id="logModal" class="modal-overlay">
+        <div class="modal-box modal-box-wide">
+          <div class="modal-header">
+            <h2 id="logModalTitle">Server Logs</h2>
+            <button id="logModalClose" class="modal-close">✕</button>
+          </div>
+          <div id="logModalBody">
+            <div id="statsBar" class="stats-bar"></div>
+            <div id="logOutput" class="log-output"></div>
+          </div>
+        </div>
+      </div>
+
+      <footer>
+        <span id="healthStatus">Checking health...</span>
+        <button id="logoutBtn" class="btn-logout">Logout</button>
+      </footer>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
