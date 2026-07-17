@@ -216,6 +216,13 @@ main {
   margin-bottom: 4px;
 }
 
+.container-card .name .last-online {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--gray);
+  margin-left: 8px;
+}
+
 .card-stats {
   display: flex;
   flex-wrap: wrap;

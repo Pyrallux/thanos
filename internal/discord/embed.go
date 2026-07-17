@@ -84,13 +84,20 @@ func stateDescription(c *orchestrator.ContainerInfo) string {
 		}
 		return fmt.Sprintf("Uptime: %s", started)
 	case orchestrator.StateDormant:
+		if !c.StartedAt.IsZero() {
+			return fmt.Sprintf("Last online: <t:%d:R>", c.StartedAt.Unix())
+		}
 		return "Stopped"
 	case orchestrator.StateStarting:
 		return "Waking up..."
 	case orchestrator.StateStopping:
 		return "Shutting down..."
 	case orchestrator.StateCrashed:
-		return fmt.Sprintf("⚠ Crashed (exit %d) · Use /start %s", c.LastExitCode, c.DisplayName)
+		detail := fmt.Sprintf("⚠ Crashed (exit %d)", c.LastExitCode)
+		if !c.StartedAt.IsZero() {
+			detail += fmt.Sprintf(" · Last online: <t:%d:R>", c.StartedAt.Unix())
+		}
+		return detail
 	default:
 		return string(c.State)
 	}
