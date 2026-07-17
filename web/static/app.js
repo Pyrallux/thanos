@@ -206,10 +206,26 @@ function updateCardInPlace(card, c) {
     badge.textContent = c.state;
   }
 
-  // Update name.
+  // Update name and last-online badge.
   const nameEl = card.querySelector(".name");
   if (nameEl) {
-    nameEl.textContent = c.display_name || c.name;
+    const isDormant = c.state === "dormant" || c.state === "crashed";
+    const lastOnlineEl = nameEl.querySelector(".last-online");
+    // Remove existing last-online if container is no longer dormant.
+    if (!isDormant && lastOnlineEl) {
+      lastOnlineEl.remove();
+    }
+    // Update or insert last-online for dormant/crashed containers.
+    if (isDormant && c.last_started) {
+      const html = `<span class="last-online" title="Last online ${new Date(c.last_started).toLocaleString()}">Last online ${timeAgo(new Date(c.last_started))}</span>`;
+      if (lastOnlineEl) {
+        lastOnlineEl.outerHTML = html;
+      } else {
+        nameEl.insertAdjacentHTML("beforeend", html);
+      }
+    }
+    // Update the name text (first child node).
+    nameEl.firstChild.textContent = c.display_name || c.name;
   }
 
   // Update stats line.
@@ -319,13 +335,17 @@ function renderCard(c) {
     startedInfo = timeAgo(new Date(c.last_started));
   }
   const cached = containerCache.get(c.id);
+  const lastOnlineHtml =
+    isDormant && c.last_started
+      ? `<span class="last-online" title="Last online ${new Date(c.last_started).toLocaleString()}">Last online ${timeAgo(new Date(c.last_started))}</span>`
+      : "";
   return `
     <div class="container-card" data-id="${c.id}">
       <div class="card-main">
         <div class="card-left">
           <span class="state-badge state-${c.state}">${c.state}</span>
           <div class="card-info">
-            <div class="name">${escapeHTML(c.display_name || c.name)}</div>
+            <div class="name">${escapeHTML(c.display_name || c.name)}${lastOnlineHtml}</div>
             <div class="card-usage">
               <span class="card-cpu" title="CPU usage">${cached ? `CPU: ${cached.cpu}` : "CPU: —"}</span>
               <span class="card-mem" title="Memory usage">${cached ? `MEM: ${cached.mem}` : "MEM: —"}</span>
