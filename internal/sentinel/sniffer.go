@@ -118,26 +118,39 @@ func (s *Sentinel) handlePacket(pkt gopacket.Packet) {
 	srcIP := extractSrcIP(pkt)
 	proto := extractProtocol(pkt)
 
+	// Check if source IP is blacklisted. Blacklisted traffic is still logged
+	// (so the user can see who's hitting them) but does NOT trigger wake or
+	// idle-reset — the packet is effectively dropped after logging.
+	blocked := srcIP != "" && s.cfg.IsBlacklisted(srcIP)
+
 	// Check if this is traffic to a dormant container (wake-on-connect).
 	s.mu.RLock()
 	cid := s.watchedPorts[dstPort]
 	s.mu.RUnlock()
 
 	if cid != "" {
-		slog.Info("wake-on-connect: packet detected",
-			"dst_port", dstPort, "src_ip", srcIP, "container_id", cid)
+		if blocked {
+			slog.Info("wake-on-connect: blocked packet from blacklisted IP",
+				"src_ip", srcIP, "dst_port", dstPort, "container_id", cid)
+		} else {
+			slog.Info("wake-on-connect: packet detected",
+				"dst_port", dstPort, "src_ip", srcIP, "container_id", cid)
+		}
 
-		// Log the wake event with source IP for traffic audit.
+		// Log the wake event (including blocked ones) for traffic audit.
 		if s.tlog != nil && srcIP != "" {
 			ci := s.orch.GetContainer(cid)
 			name := cid
 			if ci != nil {
 				name = ci.DisplayName
 			}
-			s.tlog.LogWake(cid, name, srcIP, srcPort, dstPort, proto)
+			s.tlog.LogWake(cid, name, srcIP, srcPort, dstPort, proto, blocked)
 		}
 
-		go s.orch.WakeContainer(context.Background(), cid, "wake_on_connect")
+		// Only wake the container if the source is NOT blacklisted.
+		if !blocked {
+			go s.orch.WakeContainer(context.Background(), cid, "wake_on_connect")
+		}
 		return
 	}
 
@@ -152,18 +165,20 @@ func (s *Sentinel) handlePacket(pkt gopacket.Packet) {
 
 	for port, rcid := range runningPortsCopy {
 		if port == dstPort || port == srcPort {
-			s.orch.ResetIdleTimer(rcid)
-
-			// Log ongoing traffic (dedup'd in the logger).
+			// Log ongoing traffic (dedup'd in the logger), including blocked.
 			if s.tlog != nil && srcIP != "" {
 				ci := s.orch.GetContainer(rcid)
 				name := rcid
 				if ci != nil {
 					name = ci.DisplayName
 				}
-				s.tlog.LogTraffic(rcid, name, srcIP, port)
+				s.tlog.LogTraffic(rcid, name, srcIP, port, blocked)
 			}
-			return
+
+			// Only reset idle timer if the source is NOT blacklisted.
+			if !blocked {
+				s.orch.ResetIdleTimer(rcid)
+			}
 		}
 	}
 }

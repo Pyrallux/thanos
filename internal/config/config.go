@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
+	"strconv"
+	"strings"
 
 	_ "modernc.org/sqlite"
 
@@ -32,6 +35,10 @@ type Config struct {
 	// Web UI auth
 	WebUsername     string
 	WebPasswordHash string
+
+	// IP blacklist (newline-separated CIDR patterns, e.g. "23.111.14.183/32")
+	Blacklist     []netip.Prefix
+	blacklistRaw  string
 }
 
 // Defaults applied when a key is missing from the DB on first load.
@@ -148,6 +155,8 @@ func loadConfig(db *sql.DB) (*Config, error) {
 	cfg.LogLevel = kv["log_level"]
 	cfg.APIPort, _ = atoiSafe(kv["api_port"], 4040)
 	cfg.DiscordLogChannelID = kv["discord_log_channel_id"]
+	cfg.Blacklist = parseBlacklist(kv["blacklist"])
+	cfg.blacklistRaw = kv["blacklist"]
 
 	// Discord — columns may be NULL on first run before setup wizard runs.
 	var dBotToken, dGuildID, dChannelID, dStatusMsgID sql.NullString
@@ -237,6 +246,7 @@ CREATE INDEX IF NOT EXISTS idx_server_log_container_time
     ON server_log (container_id, timestamp DESC);
 
 -- Append-only event log for wake-on-connect packets (dormant port hits).
+-- blocked=1 means the source IP matched the blacklist and was logged but not acted on.
 CREATE TABLE IF NOT EXISTS traffic_log (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp      DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -246,12 +256,14 @@ CREATE TABLE IF NOT EXISTS traffic_log (
     src_port       INTEGER,
     dst_port       INTEGER NOT NULL,
     protocol       TEXT NOT NULL,
-    event_type     TEXT NOT NULL DEFAULT 'wake_on_connect'
+    event_type     TEXT NOT NULL DEFAULT 'wake_on_connect',
+    blocked        INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_traffic_log_container_time
     ON traffic_log (container_id, timestamp DESC);
 
 -- Deduplicated persistent record of every unique (container, IP) pair.
+-- blocked=1 means the IP is on the blacklist; traffic is logged but wake/idle-reset is skipped.
 CREATE TABLE IF NOT EXISTS known_clients (
     container_id   TEXT NOT NULL,
     src_ip         TEXT NOT NULL,
@@ -260,14 +272,31 @@ CREATE TABLE IF NOT EXISTS known_clients (
     last_seen      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     pkt_count      INTEGER NOT NULL DEFAULT 1,
     last_port      INTEGER,
+    blocked        INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (container_id, src_ip)
 );
 
 INSERT OR IGNORE INTO discord_config (id) VALUES (1);
 INSERT OR IGNORE INTO web_ui_config (id, username, password_hash) VALUES (1, '', '');
 `
+
 	_, err = db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migrations: add columns that may not exist in older databases.
+	// CREATE TABLE IF NOT EXISTS already includes these columns for fresh DBs,
+	// but existing DBs need ALTER TABLE. Errors are ignored if the column exists.
+	migrations := []string{
+		`ALTER TABLE traffic_log ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE known_clients ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0`,
+	}
+	for _, m := range migrations {
+		db.Exec(m)
+	}
+
+	return nil
 }
 
 // SaveKV persists a single key/value pair into thanos_config (upsert).
@@ -287,6 +316,66 @@ func (c *Config) GetKV(key string) (string, error) {
 		return "", nil
 	}
 	return val, err
+}
+
+// SaveBlacklist persists the blacklist (raw text) and updates the in-memory list.
+func (c *Config) SaveBlacklist(raw string) error {
+	if err := c.SaveKV("blacklist", raw); err != nil {
+		return err
+	}
+	c.Blacklist = parseBlacklist(raw)
+	c.blacklistRaw = raw
+	return nil
+}
+
+// BlacklistString returns the raw blacklist text for the settings UI.
+func (c *Config) BlacklistString() string {
+	return c.blacklistRaw
+}
+
+// parseBlacklist parses newline-separated CIDR entries into a list of netip prefixes.
+// Invalid entries are silently skipped.
+func parseBlacklist(raw string) []netip.Prefix {
+	if raw == "" {
+		return nil
+	}
+	var list []netip.Prefix
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Accept bare IPs — /32 for IPv4, /128 for IPv6.
+		if !strings.Contains(line, "/") {
+			if addr, err := netip.ParseAddr(line); err == nil {
+				bits := 32
+				if addr.Is6() {
+					bits = 128
+				}
+				line = fmt.Sprintf("%s/%d", addr.String(), bits)
+			}
+		}
+		if p, err := netip.ParsePrefix(line); err == nil {
+			list = append(list, p)
+		} else {
+			slog.Warn("blacklist: skipping invalid CIDR", "entry", line, "err", err)
+		}
+	}
+	return list
+}
+
+// IsBlacklisted checks whether an IP address matches any blacklist entry.
+func (c *Config) IsBlacklisted(ip string) bool {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return false
+	}
+	for _, p := range c.Blacklist {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 // SaveDiscord persists the discord_config singleton row.
@@ -319,8 +408,8 @@ func atoiSafe(s string, fallback int) (int, error) {
 	if s == "" {
 		return fallback, nil
 	}
-	var n int
-	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+	n, err := strconv.Atoi(s)
+	if err != nil {
 		return fallback, nil
 	}
 	return n, nil

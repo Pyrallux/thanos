@@ -298,7 +298,9 @@ func (b *Bot) cmdSetStatusChannel(s *discordgo.Session, i *discordgo.Interaction
 		}
 		b.cfg.DiscordChannelID = ""
 		b.statusMsgID = ""
-		_ = b.cfg.SaveDiscord()
+		if err := b.cfg.SaveDiscord(); err != nil {
+			slog.Warn("failed to save discord config", "err", err)
+		}
 		respondText(s, i, "✅ Status embed disabled.")
 		return
 	}
@@ -324,7 +326,9 @@ func (b *Bot) cmdSetStatusChannel(s *discordgo.Session, i *discordgo.Interaction
 
 	b.cfg.DiscordChannelID = channelID
 	b.statusMsgID = ""
-	_ = b.cfg.SaveDiscord()
+	if err := b.cfg.SaveDiscord(); err != nil {
+		slog.Warn("failed to save discord config", "err", err)
+	}
 	b.refreshStatusEmbed()
 
 	respondText(s, i, fmt.Sprintf("✅ Status embed set to <#%s>.", channelID))
@@ -333,7 +337,9 @@ func (b *Bot) cmdSetStatusChannel(s *discordgo.Session, i *discordgo.Interaction
 func (b *Bot) cmdSetLogChannel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	if len(i.ApplicationCommandData().Options) == 0 {
 		b.cfg.DiscordLogChannelID = ""
-		_ = b.cfg.SaveKV("discord_log_channel_id", "")
+		if err := b.cfg.SaveKV("discord_log_channel_id", ""); err != nil {
+			slog.Warn("failed to save log channel", "err", err)
+		}
 		respondText(s, i, "✅ Log channel disabled.")
 		return
 	}
@@ -353,7 +359,9 @@ func (b *Bot) cmdSetLogChannel(s *discordgo.Session, i *discordgo.InteractionCre
 	}
 
 	b.cfg.DiscordLogChannelID = channelID
-	_ = b.cfg.SaveKV("discord_log_channel_id", channelID)
+	if err := b.cfg.SaveKV("discord_log_channel_id", channelID); err != nil {
+		slog.Warn("failed to save log channel", "err", err)
+	}
 
 	slog.Info("discord: log channel set", "channel_id", channelID)
 	respondText(s, i, fmt.Sprintf("✅ Log channel set to <#%s>.", channelID))

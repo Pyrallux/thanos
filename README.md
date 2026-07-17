@@ -15,7 +15,8 @@ Thanos is a layer on top of standard Docker. It never proxies or intercepts netw
 - **Web dashboard** — Browser-based UI for starting/stopping servers, viewing Docker logs, state logs, and traffic history; editing per-server settings; accessible over your LAN
 - **Discord integration** — Persistent status embed with per-server state emojis, slash commands (`/start`, `/stop`, `/status`, `/config`), and event notifications (wake, idle shutdown, crash)
 - **Crash detection** — Unexpected container exits are flagged as crashed (not silently restarted) to protect save data
-- **Traffic logging** — Every wake-on-connect event is logged with source IP, port, and protocol; known client IPs are tracked per server
+- **IP blacklist** — CIDR patterns block unwanted IPs from waking or resetting idle timers; blocked traffic is still logged for visibility
+- **Traffic logging** — Every connection event is logged with source IP, port, and protocol; known client IPs are tracked per server; blacklisted IPs are flagged and ignored (no wake, no idle reset)
 - **Per-server state logs** — Every state transition (dormant→starting→running→stopping→dormant, crash, etc.) is recorded in SQLite with timestamp and reason
 - **Docker-compose sync** — Generates and maintains a `docker-compose.yml` file per managed server in `/docker`, synced on startup and on every CRUD operation
 - **Windows service support** — Runs as a native Windows service (auto-start on boot, crash recovery), via NSSM, or as a console app

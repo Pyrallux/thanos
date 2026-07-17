@@ -497,16 +497,21 @@ footer {
   margin-bottom: 4px;
 }
 .modal-form input,
-.modal-form select {
+.modal-form select,
+.modal-form textarea {
   width: 100%;
   padding: 10px 12px;
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  resize: vertical;
 }
 .modal-form input:focus,
-.modal-form select:focus {
+.modal-form select:focus,
+.modal-form textarea:focus {
   outline: none;
   border-color: var(--accent-light);
 }
@@ -726,4 +731,15 @@ footer {
 }
 .traffic-table tbody tr:hover {
   background: rgba(138, 111, 209, 0.1);
+}
+.badge-blocked {
+  display: inline-block;
+  background: #c0392b;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }

@@ -215,12 +215,13 @@ function updateCardInPlace(card, c) {
   // Update stats line.
   const statsEl = card.querySelector(".card-stats");
   if (statsEl) {
+    const isDormant = c.state === "dormant" || c.state === "crashed";
     let trafficInfo = "No traffic yet";
-    if (c.last_traffic) {
+    if (!isDormant && c.last_traffic) {
       trafficInfo = timeAgo(new Date(c.last_traffic));
     }
     let startedInfo = "—";
-    if (c.last_started) {
+    if (!isDormant && c.last_started) {
       startedInfo = timeAgo(new Date(c.last_started));
     }
     statsEl.innerHTML = `
@@ -307,13 +308,14 @@ async function fetchStatsForCards(containers) {
 function renderCard(c) {
   const canStart = c.state === "dormant" || c.state === "crashed";
   const isTransient = c.state === "starting" || c.state === "stopping";
+  const isDormant = canStart;
   let trafficInfo = "No traffic yet";
-  if (c.last_traffic) {
+  if (!isDormant && c.last_traffic) {
     const ago = timeAgo(new Date(c.last_traffic));
     trafficInfo = ago;
   }
   let startedInfo = "—";
-  if (c.last_started) {
+  if (!isDormant && c.last_started) {
     startedInfo = timeAgo(new Date(c.last_started));
   }
   const cached = containerCache.get(c.id);
@@ -690,6 +692,13 @@ function renderSettingsModal(data) {
         <input id="settings_log_channel" value="${escapeHTML(data.discord_log_channel_id || "")}" placeholder="Channel for event notifications">
       </div>
 
+      <div class="section-title">IP Blacklist</div>
+      <div>
+        <label for="settings_blacklist">Ignored IP Patterns (one per line)</label>
+        <textarea id="settings_blacklist" rows="5" placeholder="23.111.14.183/32&#10;10.0.0.0/8&#10;# Lines starting with # are ignored">${escapeHTML(data.blacklist || "")}</textarea>
+        <p class="modal-note">Packets from these IPs/subnets will be silently dropped. Supports CIDR notation and bare IPs. One entry per line.</p>
+      </div>
+
       <div class="modal-actions">
         <button class="btn btn-save-settings" id="settingsSaveBtn">Save Settings</button>
         <button class="btn btn-cancel-settings" id="settingsCancelBtn">Cancel</button>
@@ -736,6 +745,7 @@ async function saveSettings() {
     discord_log_channel_id: modalBody
       .querySelector("#settings_log_channel")
       .value.trim(),
+    blacklist: modalBody.querySelector("#settings_blacklist").value,
   };
 
   const saveBtn = modalBody.querySelector("#settingsSaveBtn");
@@ -1073,13 +1083,16 @@ function openTrafficViewer(id, card) {
         html += '<div class="traffic-section-title">Known Clients</div>';
         html += '<table class="traffic-table"><thead><tr>';
         html +=
-          "<th>Source IP</th><th>Last Port</th><th>Packets</th><th>First Seen</th><th>Last Seen</th>";
+          "<th>Source IP</th><th>Last Port</th><th>Packets</th><th>First Seen</th><th>Last Seen</th><th>Status</th>";
         html += "</tr></thead><tbody>";
         clients.forEach((c) => {
           const firstSeen = new Date(c.first_seen).toLocaleString();
           const lastSeen = timeAgo(new Date(c.last_seen));
+          const blockedTag = c.blocked
+            ? '<span class="badge-blocked">Blocked</span>'
+            : "—";
           html += `<tr><td>${escapeHTML(c.src_ip)}</td><td>${c.last_port || "—"}</td>`;
-          html += `<td>${c.pkt_count}</td><td>${firstSeen}</td><td>${lastSeen}</td></tr>`;
+          html += `<td>${c.pkt_count}</td><td>${firstSeen}</td><td>${lastSeen}</td><td>${blockedTag}</td></tr>`;
         });
         html += "</tbody></table>";
       }
@@ -1089,12 +1102,15 @@ function openTrafficViewer(id, card) {
         html += '<div class="traffic-section-title">Recent Wake Events</div>';
         html += '<table class="traffic-table"><thead><tr>';
         html +=
-          "<th>Time</th><th>Source IP</th><th>Dst Port</th><th>Protocol</th>";
+          "<th>Time</th><th>Source IP</th><th>Dst Port</th><th>Protocol</th><th>Status</th>";
         html += "</tr></thead><tbody>";
         wakes.forEach((w) => {
           const ts = new Date(w.timestamp).toLocaleString();
+          const blockedTag = w.blocked
+            ? '<span class="badge-blocked">Blocked</span>'
+            : "—";
           html += `<tr><td>${ts}</td><td>${escapeHTML(w.src_ip)}</td>`;
-          html += `<td>${w.dst_port}</td><td>${escapeHTML(w.protocol)}</td></tr>`;
+          html += `<td>${w.dst_port}</td><td>${escapeHTML(w.protocol)}</td><td>${blockedTag}</td></tr>`;
         });
         html += "</tbody></table>";
       }
