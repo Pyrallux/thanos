@@ -33,25 +33,26 @@ func New(db *sql.DB) *Logger {
 }
 
 // LogWake records a wake-on-connect event — a packet that triggered a
-// container start. These are low-volume (one per connection attempt), so
-// every one is logged to traffic_log and upserted into known_clients.
-func (l *Logger) LogWake(containerID, containerName, srcIP string, srcPort, dstPort int, protocol string) {
+// container start (or was blocked by the blacklist). These are low-volume
+// (one per connection attempt), so every one is logged to traffic_log and
+// upserted into known_clients.
+func (l *Logger) LogWake(containerID, containerName, srcIP string, srcPort, dstPort int, protocol string, blocked bool) {
 	// Insert into traffic_log (append-only event record).
 	_, err := l.db.Exec(
-		`INSERT INTO traffic_log (container_id, container_name, src_ip, src_port, dst_port, protocol, event_type)
-		 VALUES (?, ?, ?, ?, ?, ?, 'wake_on_connect')`,
-		containerID, containerName, srcIP, srcPort, dstPort, protocol)
+		`INSERT INTO traffic_log (container_id, container_name, src_ip, src_port, dst_port, protocol, event_type, blocked)
+		 VALUES (?, ?, ?, ?, ?, ?, 'wake_on_connect', ?)`,
+		containerID, containerName, srcIP, srcPort, dstPort, protocol, blocked)
 	if err != nil {
 		slog.Warn("traffic: failed to insert traffic_log entry", "container", containerName, "err", err)
 	}
 
-	l.upsertClient(containerID, containerName, srcIP, dstPort)
+	l.upsertClient(containerID, containerName, srcIP, dstPort, blocked)
 }
 
 // LogTraffic records ongoing traffic to a running container. Uses in-memory
 // dedup so each unique (container, IP) pair hits the DB at most once per
 // minute. This prevents high packet rates from flooding SQLite.
-func (l *Logger) LogTraffic(containerID, containerName, srcIP string, dstPort int) {
+func (l *Logger) LogTraffic(containerID, containerName, srcIP string, dstPort int, blocked bool) {
 	// Check the in-memory dedup map.
 	l.mu.Lock()
 	if _, ok := l.recent[containerID]; !ok {
@@ -66,19 +67,37 @@ func (l *Logger) LogTraffic(containerID, containerName, srcIP string, dstPort in
 	l.recent[containerID][srcIP] = time.Now()
 	l.mu.Unlock()
 
-	l.upsertClient(containerID, containerName, srcIP, dstPort)
+	l.upsertClient(containerID, containerName, srcIP, dstPort, blocked)
 }
 
 // upsertClient inserts or updates the known_clients row for a (container, IP)
 // pair. On conflict, it updates last_seen, pkt_count, and last_port.
-func (l *Logger) upsertClient(containerID, containerName, srcIP string, dstPort int) {
+// The blocked flag reflects the current blacklist state: true → blocked=1,
+// false → blocked=0 (clears a previously blocked IP if removed from blacklist).
+func (l *Logger) upsertClient(containerID, containerName, srcIP string, dstPort int, blocked bool) {
+	if blocked {
+		_, err := l.db.Exec(
+			`INSERT INTO known_clients (container_id, src_ip, container_name, last_port, last_seen, pkt_count, blocked)
+			 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 1, 1)
+			 ON CONFLICT(container_id, src_ip) DO UPDATE SET
+			   last_port = excluded.last_port,
+			   last_seen = excluded.last_seen,
+			   pkt_count = known_clients.pkt_count + 1,
+			   blocked = 1`,
+			containerID, srcIP, containerName, dstPort)
+		if err != nil {
+			slog.Warn("traffic: failed to upsert known_clients", "container", containerName, "ip", srcIP, "err", err)
+		}
+		return
+	}
 	_, err := l.db.Exec(
-		`INSERT INTO known_clients (container_id, src_ip, container_name, last_port, last_seen, pkt_count)
-		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 1)
+		`INSERT INTO known_clients (container_id, src_ip, container_name, last_port, last_seen, pkt_count, blocked)
+		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 1, 0)
 		 ON CONFLICT(container_id, src_ip) DO UPDATE SET
 		   last_port = excluded.last_port,
 		   last_seen = excluded.last_seen,
-		   pkt_count = known_clients.pkt_count + 1`,
+		   pkt_count = known_clients.pkt_count + 1,
+		   blocked = 0`,
 		containerID, srcIP, containerName, dstPort)
 	if err != nil {
 		slog.Warn("traffic: failed to upsert known_clients", "container", containerName, "ip", srcIP, "err", err)
@@ -113,6 +132,7 @@ type WakeEntry struct {
 	DstPort       int       `json:"dst_port"`
 	Protocol      string    `json:"protocol"`
 	EventType     string    `json:"event_type"`
+	Blocked       bool      `json:"blocked"`
 }
 
 // ClientEntry is a single known_clients row.
@@ -124,6 +144,7 @@ type ClientEntry struct {
 	LastSeen      time.Time `json:"last_seen"`
 	PktCount      int       `json:"pkt_count"`
 	LastPort      int       `json:"last_port"`
+	Blocked       bool      `json:"blocked"`
 }
 
 // RecentWakes returns the most recent wake events across all containers
@@ -132,7 +153,7 @@ func RecentWakes(db *sql.DB, containerID string, limit int) ([]WakeEntry, error)
 	if limit <= 0 {
 		limit = 50
 	}
-	q := `SELECT id, timestamp, container_id, container_name, src_ip, src_port, dst_port, protocol, event_type
+	q := `SELECT id, timestamp, container_id, container_name, src_ip, src_port, dst_port, protocol, event_type, blocked
 	      FROM traffic_log`
 	var args []any
 	if containerID != "" {
@@ -151,9 +172,11 @@ func RecentWakes(db *sql.DB, containerID string, limit int) ([]WakeEntry, error)
 	var entries []WakeEntry
 	for rows.Next() {
 		var e WakeEntry
-		if err := rows.Scan(&e.ID, &e.Timestamp, &e.ContainerID, &e.ContainerName, &e.SrcIP, &e.SrcPort, &e.DstPort, &e.Protocol, &e.EventType); err != nil {
+		var blocked int
+		if err := rows.Scan(&e.ID, &e.Timestamp, &e.ContainerID, &e.ContainerName, &e.SrcIP, &e.SrcPort, &e.DstPort, &e.Protocol, &e.EventType, &blocked); err != nil {
 			return nil, err
 		}
+		e.Blocked = blocked != 0
 		entries = append(entries, e)
 	}
 	return entries, rows.Err()
@@ -165,7 +188,7 @@ func KnownClients(db *sql.DB, containerID string, limit int) ([]ClientEntry, err
 	if limit <= 0 {
 		limit = 100
 	}
-	q := `SELECT container_id, container_name, src_ip, first_seen, last_seen, pkt_count, last_port
+	q := `SELECT container_id, container_name, src_ip, first_seen, last_seen, pkt_count, last_port, blocked
 	      FROM known_clients`
 	var args []any
 	if containerID != "" {
@@ -184,9 +207,11 @@ func KnownClients(db *sql.DB, containerID string, limit int) ([]ClientEntry, err
 	var entries []ClientEntry
 	for rows.Next() {
 		var e ClientEntry
-		if err := rows.Scan(&e.ContainerID, &e.ContainerName, &e.SrcIP, &e.FirstSeen, &e.LastSeen, &e.PktCount, &e.LastPort); err != nil {
+		var blocked int
+		if err := rows.Scan(&e.ContainerID, &e.ContainerName, &e.SrcIP, &e.FirstSeen, &e.LastSeen, &e.PktCount, &e.LastPort, &blocked); err != nil {
 			return nil, err
 		}
+		e.Blocked = blocked != 0
 		entries = append(entries, e)
 	}
 	return entries, rows.Err()

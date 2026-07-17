@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -172,34 +171,13 @@ func (s *Server) handleStatsStream(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		// Calculate CPU percentage.
-		cpuPercent := 0.0
-		if stats.CPUStats.CPUUsage.TotalUsage > 0 && stats.PreCPUStats.CPUUsage.TotalUsage > 0 {
-			cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage)
-			systemDelta := float64(stats.CPUStats.SystemUsage - stats.PreCPUStats.SystemUsage)
-			if systemDelta > 0 && cpuDelta > 0 {
-				onlineCPUs := stats.CPUStats.OnlineCPUs
-				if onlineCPUs == 0 {
-					onlineCPUs = 1
-				}
-				cpuPercent = (cpuDelta / systemDelta) * float64(onlineCPUs) * 100
-			}
-		}
-
-		// Calculate memory usage in MB.
-		memUsage := float64(stats.MemoryStats.Usage) / (1024 * 1024)
-		memLimit := float64(stats.MemoryStats.Limit) / (1024 * 1024)
-
-		memPercent := 0.0
-		if memLimit > 0 {
-			memPercent = (memUsage / memLimit) * 100
-		}
+		statValues := computeStats(stats)
 
 		msg := map[string]any{
 			"type":       "stats",
-			"cpu":        fmt.Sprintf("%.1f%%", cpuPercent),
-			"mem":        fmt.Sprintf("%.0fMB / %.0fMB", memUsage, memLimit),
-			"mem_percent": fmt.Sprintf("%.1f%%", memPercent),
+			"cpu":        statValues["cpu"],
+			"mem":        statValues["mem"],
+			"mem_percent": statValues["mem_percent"],
 			"timestamp":  time.Now().Format(time.RFC3339),
 		}
 

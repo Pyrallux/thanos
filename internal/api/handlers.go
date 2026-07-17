@@ -1,12 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -44,9 +46,25 @@ func (s *Server) handleIcon(w http.ResponseWriter, r *http.Request) {
 	// Check if a custom icon path is configured.
 	iconPath, err := s.cfg.GetKV("icon_path")
 	if err == nil && iconPath != "" {
-		if _, err := os.Stat(iconPath); err == nil {
-			http.ServeFile(w, r, iconPath)
-			return
+		// Validate the path is not a traversal and the file exists.
+		if abs, _ := filepath.Abs(iconPath); abs == iconPath || !strings.Contains(iconPath, "..") {
+			if data, ferr := os.ReadFile(iconPath); ferr == nil {
+				ext := strings.ToLower(filepath.Ext(iconPath))
+				mime := "image/jpeg"
+				if ext == ".png" {
+					mime = "image/png"
+				} else if ext == ".svg" {
+					mime = "image/svg+xml"
+				} else if ext == ".gif" {
+					mime = "image/gif"
+				} else if ext == ".webp" {
+					mime = "image/webp"
+				}
+				w.Header().Set("Content-Type", mime)
+				w.Header().Set("Cache-Control", "no-cache")
+				http.ServeContent(w, r, filepath.Base(iconPath), time.Time{}, bytes.NewReader(data))
+				return
+			}
 		}
 	}
 	// Serve the embedded default Thanos icon.
@@ -240,6 +258,37 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// computeStats calculates CPU and memory percentages from a Docker stats
+// response. Used by both one-shot and streaming stats handlers.
+func computeStats(stats container.StatsResponse) map[string]any {
+	cpuPercent := 0.0
+	if stats.CPUStats.CPUUsage.TotalUsage > 0 && stats.PreCPUStats.CPUUsage.TotalUsage > 0 {
+		cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage)
+		systemDelta := float64(stats.CPUStats.SystemUsage - stats.PreCPUStats.SystemUsage)
+		if systemDelta > 0 && cpuDelta > 0 {
+			onlineCPUs := stats.CPUStats.OnlineCPUs
+			if onlineCPUs == 0 {
+				onlineCPUs = 1
+			}
+			cpuPercent = (cpuDelta / systemDelta) * float64(onlineCPUs) * 100
+		}
+	}
+
+	memUsage := float64(stats.MemoryStats.Usage) / (1024 * 1024)
+	memLimit := float64(stats.MemoryStats.Limit) / (1024 * 1024)
+
+	memPercent := 0.0
+	if memLimit > 0 {
+		memPercent = (memUsage / memLimit) * 100
+	}
+
+	return map[string]any{
+		"cpu":         fmt.Sprintf("%.1f%%", cpuPercent),
+		"mem":         fmt.Sprintf("%.0fMB / %.0fMB", memUsage, memLimit),
+		"mem_percent": fmt.Sprintf("%.1f%%", memPercent),
+	}
+}
+
 // getContainerStats does a one-shot Docker stats query for a container
 // and returns CPU and memory usage as a map.
 //
@@ -278,33 +327,7 @@ func (s *Server) getContainerStats(id string) (map[string]any, error) {
 		}
 	}
 
-	cpuPercent := 0.0
-	if stats.CPUStats.CPUUsage.TotalUsage > 0 && stats.PreCPUStats.CPUUsage.TotalUsage > 0 {
-		cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage)
-		systemDelta := float64(stats.CPUStats.SystemUsage - stats.PreCPUStats.SystemUsage)
-		if systemDelta > 0 && cpuDelta > 0 {
-			// OnlineCPUs may be 0 on older Docker versions; fall back to 1.
-			onlineCPUs := stats.CPUStats.OnlineCPUs
-			if onlineCPUs == 0 {
-				onlineCPUs = 1
-			}
-			cpuPercent = (cpuDelta / systemDelta) * float64(onlineCPUs) * 100
-		}
-	}
-
-	memUsage := float64(stats.MemoryStats.Usage) / (1024 * 1024)
-	memLimit := float64(stats.MemoryStats.Limit) / (1024 * 1024)
-
-	memPercent := 0.0
-	if memLimit > 0 {
-		memPercent = (memUsage / memLimit) * 100
-	}
-
-	return map[string]any{
-		"cpu":         fmt.Sprintf("%.1f%%", cpuPercent),
-		"mem":         fmt.Sprintf("%.0fMB / %.0fMB", memUsage, memLimit),
-		"mem_percent": fmt.Sprintf("%.1f%%", memPercent),
-	}, nil
+	return computeStats(stats), nil
 }
 
 // handleServerLogs returns the per-server state-change log entries for a
@@ -400,6 +423,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			"discord_guild_id":    s.cfg.DiscordGuildID,
 			"discord_channel_id":  s.cfg.DiscordChannelID,
 			"discord_log_channel_id": s.cfg.DiscordLogChannelID,
+			"blacklist":          s.cfg.BlacklistString(),
 		})
 		return
 	case http.MethodPost:
@@ -416,6 +440,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		DiscordGuildID      string `json:"discord_guild_id"`
 		DiscordChannelID    string `json:"discord_channel_id"`
 		DiscordLogChannelID string `json:"discord_log_channel_id"`
+		Blacklist          string `json:"blacklist"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -453,19 +478,28 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.NetworkInterface = req.NetworkInterface
 
 	// Update Discord config if provided.
+	var warnings []string
 	if req.DiscordGuildID != s.cfg.DiscordGuildID ||
 		req.DiscordChannelID != s.cfg.DiscordChannelID {
 		s.cfg.DiscordGuildID = req.DiscordGuildID
 		s.cfg.DiscordChannelID = req.DiscordChannelID
 		if err := s.cfg.SaveDiscord(); err != nil {
 			slog.Warn("failed to save discord config", "err", err)
+			warnings = append(warnings, fmt.Sprintf("discord config: %v", err))
 		}
 	}
 	if req.DiscordLogChannelID != s.cfg.DiscordLogChannelID {
 		s.cfg.DiscordLogChannelID = req.DiscordLogChannelID
 		if err := s.cfg.SaveKV("discord_log_channel_id", req.DiscordLogChannelID); err != nil {
 			slog.Warn("failed to save discord log channel", "err", err)
+			warnings = append(warnings, fmt.Sprintf("discord log channel: %v", err))
 		}
+	}
+
+	// Save blacklist (CIDR patterns, one per line).
+	if err := s.cfg.SaveBlacklist(req.Blacklist); err != nil {
+		slog.Warn("failed to save blacklist", "err", err)
+		warnings = append(warnings, fmt.Sprintf("blacklist: %v", err))
 	}
 
 	if err := s.cfg.SaveWebAuth(); err != nil {
@@ -480,5 +514,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		s.ifaceUpdater.SetNetworkInterface(req.NetworkInterface)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "settings updated"})
+	if len(warnings) > 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "settings updated with warnings", "warnings": warnings})
+	} else {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "settings updated"})
+	}
 }

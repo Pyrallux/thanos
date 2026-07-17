@@ -100,8 +100,11 @@ func (c *Client) UpdateLabelsWithOptions(ctx context.Context, id string, labels 
 	}
 
 	// 2. Stop the container if it's running.
-	if inspect.State != nil && inspect.State.Running {
-		_ = c.CLI.ContainerStop(ctx, id, container.StopOptions{})
+	wasRunning := inspect.State != nil && inspect.State.Running
+	if wasRunning {
+		if err := c.CLI.ContainerStop(ctx, id, container.StopOptions{}); err != nil {
+			slog.Warn("failed to stop container during label update", "id", id, "err", err)
+		}
 	}
 
 	// 3. Merge existing labels with the new ones.
@@ -160,6 +163,13 @@ func (c *Client) UpdateLabelsWithOptions(ctx context.Context, id string, labels 
 	_, err = c.CLI.ContainerCreate(ctx, &createConfig, &hostConfig, networkingConfig, nil, name)
 	if err != nil {
 		return fmt.Errorf("recreate container: %w", err)
+	}
+
+	// 6. Start the new container if the original was running.
+	if wasRunning {
+		if err := c.CLI.ContainerStart(ctx, name, container.StartOptions{}); err != nil {
+			slog.Warn("failed to start container after label update", "name", name, "err", err)
+		}
 	}
 
 	return nil
