@@ -20,24 +20,25 @@ type State string
 
 const (
 	StateUnmanaged State = "unmanaged"
-	StateDormant    State = "dormant"
-	StateStarting   State = "starting"
-	StateRunning    State = "running"
-	StateStopping   State = "stopping"
-	StateCrashed    State = "crashed"
+	StateDormant   State = "dormant"
+	StateStarting  State = "starting"
+	StateRunning   State = "running"
+	StateStopping  State = "stopping"
+	StateCrashed   State = "crashed"
 )
 
 // ContainerInfo holds runtime metadata about a managed container.
 type ContainerInfo struct {
-	ID          string
-	Name        string
-	DisplayName string
-	State       State
-	Ports       []int
-	SnapTimeout int
-	Labels      docker.Labels
+	ID            string
+	Name          string
+	DisplayName   string
+	State         State
+	Ports         []int
+	SnapTimeout   int
+	Labels        docker.Labels
 	StartedAt     time.Time // set when container transitions to running
 	LastTrafficAt time.Time // set by StartIdleTimer; reflects when the idle countdown (re)started
+	LastOnlineAt  time.Time // set when container leaves running state — when it was last actually online
 	StopReason    string    // set when transitioning to stopping ("manual_stop", "idle_timeout", etc.)
 	LastExitCode  int       // set when container exits (used for crash notifications)
 }
@@ -46,13 +47,13 @@ type ContainerInfo struct {
 // idle timers, and the watched-port map. It is the central hub that the
 // sentinel, API, and Discord bot all interact with.
 type Orchestrator struct {
-	cfg   *config.Config
-	dock  *docker.Client
-	db    *sql.DB
+	cfg  *config.Config
+	dock *docker.Client
+	db   *sql.DB
 
-	mu        sync.RWMutex
-	containers map[string]*ContainerInfo // keyed by container ID
-	stateTimers map[string]*time.Timer   // idle timers per container
+	mu          sync.RWMutex
+	containers  map[string]*ContainerInfo // keyed by container ID
+	stateTimers map[string]*time.Timer    // idle timers per container
 
 	// watchers are notified on container state changes.
 	watchers []StateWatcher
@@ -138,6 +139,12 @@ func (o *Orchestrator) setState(id string, s State) {
 	}
 	oldState := ci.State
 	ci.State = s
+	// Record when the container was last actually online: the moment it
+	// leaves the running state. This is the timestamp the UI and Discord
+	// show as "Last online" — not StartedAt (which is when it booted).
+	if oldState == StateRunning && s != StateRunning {
+		ci.LastOnlineAt = time.Now()
+	}
 	o.mu.Unlock()
 
 	// Write a timestamped entry to the server_log table.
@@ -314,14 +321,18 @@ func (o *Orchestrator) reconcile(ctx context.Context, initial bool) error {
 			ci.DisplayName = ci.Name
 		}
 
-		// Preserve LastTrafficAt and StartedAt from the existing in-memory
-		// record so periodic reconciles don't reset the uptime or heartbeat.
+		// Preserve LastTrafficAt, StartedAt, and LastOnlineAt from the
+		// existing in-memory record so periodic reconciles don't reset
+		// the uptime, heartbeat, or "last online" timestamp.
 		if old, ok := oldContainers[sc.ID]; ok {
 			if !old.LastTrafficAt.IsZero() {
 				ci.LastTrafficAt = old.LastTrafficAt
 			}
 			if !old.StartedAt.IsZero() {
 				ci.StartedAt = old.StartedAt
+			}
+			if !old.LastOnlineAt.IsZero() {
+				ci.LastOnlineAt = old.LastOnlineAt
 			}
 		}
 
