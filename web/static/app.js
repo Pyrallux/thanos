@@ -403,6 +403,19 @@ function timeAgo(date) {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+// cardName extracts just the server name from a container card. The .name
+// element also holds a .last-online span for dormant/crashed containers, so
+// `.name.textContent` would concatenate them with no separator (issue #7).
+// The first child node is always the bare text node set by renderCard.
+function cardName(card) {
+  const nameEl = card.querySelector(".name");
+  if (!nameEl) return "";
+  const first = nameEl.firstChild;
+  return first && first.nodeType === Node.TEXT_NODE
+    ? first.textContent.trim()
+    : nameEl.textContent.trim();
+}
+
 let actionsBound = false;
 
 function bindActions() {
@@ -584,7 +597,7 @@ function showLabelEditorInModal(container) {
 }
 
 async function removeFromDashboard(id, card) {
-  const name = card.querySelector(".name").textContent;
+  const name = cardName(card);
   if (
     !confirm(
       `Remove "${name}" from Thanos management? The container will be recreated without Thanos labels.`,
@@ -961,7 +974,7 @@ let logWs = null;
 let statsPollTimer = null;
 
 function openLogViewer(id, card) {
-  const name = card.querySelector(".name").textContent;
+  const name = cardName(card);
   logModalTitle.textContent = `Logs - ${name}`;
   logOutput.innerHTML = '<div class="loading">Connecting...</div>';
   statsBar.innerHTML = "";
@@ -1040,7 +1053,7 @@ logModal.addEventListener("click", (e) => {
 // Opens the log modal and displays per-server state-change log entries
 // fetched from the /api/server-logs/{id} endpoint.
 function openStateLogViewer(id, card) {
-  const name = card.querySelector(".name").textContent;
+  const name = cardName(card);
   logModalTitle.textContent = `State Logs - ${name}`;
   statsBar.innerHTML = "";
   logOutput.innerHTML = '<div class="loading">Loading state logs...</div>';
@@ -1079,7 +1092,7 @@ function openStateLogViewer(id, card) {
 // Opens the log modal and displays wake-on-connect events and known clients
 // for a specific container, fetched from /api/traffic and /api/clients.
 function openTrafficViewer(id, card) {
-  const name = card.querySelector(".name").textContent;
+  const name = cardName(card);
   logModalTitle.textContent = `Traffic - ${name}`;
   statsBar.innerHTML = "";
   logOutput.innerHTML = '<div class="loading">Loading traffic data...</div>';
@@ -1108,38 +1121,27 @@ function openTrafficViewer(id, card) {
       // Known clients section.
       if (clients.length > 0) {
         html += '<div class="traffic-section-title">Known Clients</div>';
-        html += '<table class="traffic-table"><thead><tr>';
-        html +=
-          "<th>Source IP</th><th>Last Port</th><th>Packets</th><th>First Seen</th><th>Last Seen</th><th>Status</th>";
-        html += "</tr></thead><tbody>";
-        clients.forEach((c) => {
-          const firstSeen = new Date(c.first_seen).toLocaleString();
-          const lastSeen = timeAgo(new Date(c.last_seen));
-          const blockedTag = c.blocked
-            ? '<span class="badge-blocked">Blocked</span>'
-            : "—";
-          html += `<tr><td>${escapeHTML(c.src_ip)}</td><td>${c.last_port || "—"}</td>`;
-          html += `<td>${c.pkt_count}</td><td>${firstSeen}</td><td>${lastSeen}</td><td>${blockedTag}</td></tr>`;
-        });
-        html += "</tbody></table>";
+        const [active, blocked] = splitByBlocked(clients);
+        html += renderClientTable(active);
+        if (blocked.length > 0) {
+          html += renderCollapsible(
+            `Blocked (${blocked.length})`,
+            renderClientTable(blocked),
+          );
+        }
       }
 
       // Recent wake events section.
       if (wakes.length > 0) {
         html += '<div class="traffic-section-title">Recent Wake Events</div>';
-        html += '<table class="traffic-table"><thead><tr>';
-        html +=
-          "<th>Time</th><th>Source IP</th><th>Dst Port</th><th>Protocol</th><th>Status</th>";
-        html += "</tr></thead><tbody>";
-        wakes.forEach((w) => {
-          const ts = new Date(w.timestamp).toLocaleString();
-          const blockedTag = w.blocked
-            ? '<span class="badge-blocked">Blocked</span>'
-            : "—";
-          html += `<tr><td>${ts}</td><td>${escapeHTML(w.src_ip)}</td>`;
-          html += `<td>${w.dst_port}</td><td>${escapeHTML(w.protocol)}</td><td>${blockedTag}</td></tr>`;
-        });
-        html += "</tbody></table>";
+        const [active, blocked] = splitByBlocked(wakes);
+        html += renderWakeTable(active);
+        if (blocked.length > 0) {
+          html += renderCollapsible(
+            `Blocked (${blocked.length})`,
+            renderWakeTable(blocked),
+          );
+        }
       }
 
       logOutput.innerHTML = html;
@@ -1147,6 +1149,64 @@ function openTrafficViewer(id, card) {
     .catch((e) => {
       logOutput.innerHTML = `<div class="loading">Failed to load traffic data: ${e.message}</div>`;
     });
+}
+
+// splitByBlocked partitions an array of traffic/client entries into
+// [active, blocked] based on the boolean `blocked` field.
+function splitByBlocked(entries) {
+  const active = [];
+  const blocked = [];
+  for (const e of entries) {
+    if (e.blocked) blocked.push(e);
+    else active.push(e);
+  }
+  return [active, blocked];
+}
+
+// renderCollapsible wraps content in a <details> element so Blocked entries
+// stay collapsed by default and can be expanded on demand (issue #7).
+function renderCollapsible(summary, content) {
+  return `<details class="traffic-collapsible">
+    <summary>${escapeHTML(summary)}</summary>
+    ${content}
+  </details>`;
+}
+
+function renderClientTable(clients) {
+  if (clients.length === 0) return "";
+  let html = '<table class="traffic-table"><thead><tr>';
+  html +=
+    "<th>Source IP</th><th>Last Port</th><th>Packets</th><th>First Seen</th><th>Last Seen</th><th>Status</th>";
+  html += "</tr></thead><tbody>";
+  clients.forEach((c) => {
+    const firstSeen = new Date(c.first_seen).toLocaleString();
+    const lastSeen = timeAgo(new Date(c.last_seen));
+    const blockedTag = c.blocked
+      ? '<span class="badge-blocked">Blocked</span>'
+      : "—";
+    html += `<tr><td>${escapeHTML(c.src_ip)}</td><td>${c.last_port || "—"}</td>`;
+    html += `<td>${c.pkt_count}</td><td>${firstSeen}</td><td>${lastSeen}</td><td>${blockedTag}</td></tr>`;
+  });
+  html += "</tbody></table>";
+  return html;
+}
+
+function renderWakeTable(wakes) {
+  if (wakes.length === 0) return "";
+  let html = '<table class="traffic-table"><thead><tr>';
+  html +=
+    "<th>Time</th><th>Source IP</th><th>Dst Port</th><th>Protocol</th><th>Status</th>";
+  html += "</tr></thead><tbody>";
+  wakes.forEach((w) => {
+    const ts = new Date(w.timestamp).toLocaleString();
+    const blockedTag = w.blocked
+      ? '<span class="badge-blocked">Blocked</span>'
+      : "—";
+    html += `<tr><td>${ts}</td><td>${escapeHTML(w.src_ip)}</td>`;
+    html += `<td>${w.dst_port}</td><td>${escapeHTML(w.protocol)}</td><td>${blockedTag}</td></tr>`;
+  });
+  html += "</tbody></table>";
+  return html;
 }
 
 // ── Init ──

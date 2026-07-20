@@ -682,7 +682,12 @@ footer {
   max-width: 800px;
 }
 
-/* Stats bar in log viewer */
+/* Stats bar in log viewer. Hidden when empty (issue #7: the empty bar
+   below the title showed as a blank strip when no stats were loaded). */
+.stats-bar:empty {
+  display: none;
+}
+
 .stats-bar {
   display: flex;
   gap: 20px;
@@ -749,4 +754,34 @@ footer {
   border-radius: 3px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
+}
+
+/* Collapsible Blocked sections in the traffic viewer (issue #7). */
+.traffic-collapsible {
+  margin: 4px 0 12px 0;
+}
+.traffic-collapsible > summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--gray);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  list-style: none;
+  user-select: none;
+}
+.traffic-collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+.traffic-collapsible > summary::before {
+  content: "▸ ";
+  color: var(--gray);
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+.traffic-collapsible[open] > summary::before {
+  content: "▾ ";
+}
+.traffic-collapsible > summary:hover {
+  color: var(--accent-light);
 }
