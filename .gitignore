@@ -18,7 +18,8 @@ thanos.db*
 
 # IDE / editor
 .vscode/
-.github/
+.github/copilot-instructions.md
+.github/THANOS.md
 .idea/
 *.swp
 *.swo
