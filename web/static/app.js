@@ -216,12 +216,18 @@ function updateCardInPlace(card, c) {
       lastOnlineEl.remove();
     }
     // Update or insert last-online for dormant/crashed containers.
-    if (isDormant && c.last_started) {
-      const html = `<span class="last-online" title="Last online ${new Date(c.last_started).toLocaleString()}">Last online ${timeAgo(new Date(c.last_started))}</span>`;
-      if (lastOnlineEl) {
-        lastOnlineEl.outerHTML = html;
-      } else {
-        nameEl.insertAdjacentHTML("beforeend", html);
+    if (isDormant) {
+      // Prefer last_online (when the server actually went offline) over
+      // last_started (when it booted). Fall back if last_online is missing
+      // (e.g. older server still running, or never been online).
+      const onlineTs = c.last_online || c.last_started;
+      if (onlineTs) {
+        const html = `<span class="last-online" title="Last online ${new Date(onlineTs).toLocaleString()}">Last online ${timeAgo(new Date(onlineTs))}</span>`;
+        if (lastOnlineEl) {
+          lastOnlineEl.outerHTML = html;
+        } else {
+          nameEl.insertAdjacentHTML("beforeend", html);
+        }
       }
     }
     // Update the name text (first child node).
@@ -335,9 +341,10 @@ function renderCard(c) {
     startedInfo = timeAgo(new Date(c.last_started));
   }
   const cached = containerCache.get(c.id);
+  const lastOnlineTs = c.last_online || c.last_started;
   const lastOnlineHtml =
-    isDormant && c.last_started
-      ? `<span class="last-online" title="Last online ${new Date(c.last_started).toLocaleString()}">Last online ${timeAgo(new Date(c.last_started))}</span>`
+    isDormant && lastOnlineTs
+      ? `<span class="last-online" title="Last online ${new Date(lastOnlineTs).toLocaleString()}">Last online ${timeAgo(new Date(lastOnlineTs))}</span>`
       : "";
   return `
     <div class="container-card" data-id="${c.id}">
