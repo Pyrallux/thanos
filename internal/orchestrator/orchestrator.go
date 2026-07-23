@@ -35,12 +35,13 @@ type ContainerInfo struct {
 	State         State
 	Ports         []int
 	SnapTimeout   int
-	Labels        docker.Labels
-	StartedAt     time.Time // set when container transitions to running
-	LastTrafficAt time.Time // set by StartIdleTimer; reflects when the idle countdown (re)started
-	LastOnlineAt  time.Time // set when container leaves running state — when it was last actually online
-	StopReason    string    // set when transitioning to stopping ("manual_stop", "idle_timeout", etc.)
-	LastExitCode  int       // set when container exits (used for crash notifications)
+	Labels          docker.Labels
+	StartedAt       time.Time // set when container transitions to running
+	LastTrafficAt   time.Time // set by StartIdleTimer; reflects when the idle countdown (re)started
+	LastOnlineAt    time.Time // set when container leaves running state — when it was last actually online
+	StopReason      string    // set when transitioning to stopping ("manual_stop", "idle_timeout", etc.)
+	LastExitCode    int       // set when container exits (used for crash notifications)
+	LastWakeAttempt time.Time // set when WakeContainer is called — used for cooldown
 }
 
 // Orchestrator owns the container state machine, Docker event subscription,
@@ -54,6 +55,12 @@ type Orchestrator struct {
 	mu          sync.RWMutex
 	containers  map[string]*ContainerInfo // keyed by container ID
 	stateTimers map[string]*time.Timer    // idle timers per container
+
+	// wakeCooldowns tracks the last wake attempt per container to prevent
+	// rapid retry loops when dock.Start() fails or the container exits
+	// immediately. Rapid SYNs can trigger WakeContainer dozens of times in
+	// a second, each one calling dock.Start() and creating a tight loop.
+	wakeCooldowns map[string]time.Time
 
 	// watchers are notified on container state changes.
 	watchers []StateWatcher
@@ -72,11 +79,12 @@ func New(cfg *config.Config) (*Orchestrator, error) {
 	}
 
 	return &Orchestrator{
-		cfg:         cfg,
-		dock:        dc,
-		db:          cfg.DB,
-		containers:  make(map[string]*ContainerInfo),
-		stateTimers: make(map[string]*time.Timer),
+		cfg:           cfg,
+		dock:          dc,
+		db:            cfg.DB,
+		containers:    make(map[string]*ContainerInfo),
+		stateTimers:   make(map[string]*time.Timer),
+		wakeCooldowns: make(map[string]time.Time),
 	}, nil
 }
 
@@ -138,6 +146,10 @@ func (o *Orchestrator) setState(id string, s State) {
 		return
 	}
 	oldState := ci.State
+	if oldState == s {
+		o.mu.Unlock()
+		return // no-op: no state change to report
+	}
 	ci.State = s
 	// Record when the container was last actually online: the moment it
 	// leaves the running state. This is the timestamp the UI and Discord
@@ -334,6 +346,13 @@ func (o *Orchestrator) reconcile(ctx context.Context, initial bool) error {
 			if !old.LastOnlineAt.IsZero() {
 				ci.LastOnlineAt = old.LastOnlineAt
 			}
+			// Preserve transient Thanos-managed states (Starting, Stopping)
+			// across periodic reconciles. Docker may not report "running"
+			// yet during a wake, and reconciling it back to Dormant kills
+			// the in-progress start.
+			if old.State == StateStarting || old.State == StateStopping {
+				ci.State = old.State
+			}
 		}
 
 		// Port conflict check: two different managed containers mapping to
@@ -373,7 +392,11 @@ func (o *Orchestrator) reconcile(ctx context.Context, initial bool) error {
 			}
 			// LastTrafficAt is set by StartIdleTimer when the idle timer
 			// is armed below; no need to set it here.
-		} else {
+		} else if ci.State != StateStarting && ci.State != StateStopping {
+			// Only fall back to Dormant if Thanos isn't already managing
+			// a transient state (Starting/Stopping). Otherwise a periodic
+			// reconcile during a wake would revert Starting → Dormant
+			// and kill the in-progress container start.
 			ci.State = StateDormant
 		}
 
@@ -427,6 +450,12 @@ func (o *Orchestrator) reconcile(ctx context.Context, initial bool) error {
 // WakeContainer is called by the sentinel (on packet detection) or by the
 // API/Discord bot (manual start). It starts the container if it's dormant.
 // Debounce: only one start call per container until it reaches running state.
+// A cooldown prevents rapid retry loops when dock.Start() fails or the
+// container exits immediately — without it, a stream of SYNs can trigger
+// dozens of WakeContainer calls per second, each calling dock.Start() and
+// creating a tight starting→dormant→starting loop.
+const wakeCooldown = 10 * time.Second
+
 func (o *Orchestrator) WakeContainer(ctx context.Context, id string, reason string) error {
 	o.mu.Lock()
 	ci, ok := o.containers[id]
@@ -444,6 +473,15 @@ func (o *Orchestrator) WakeContainer(ctx context.Context, id string, reason stri
 		o.mu.Unlock()
 		return nil
 	}
+	// Cooldown: if the last wake attempt was recent, skip. This prevents
+	// rapid SYN floods from creating a start/stop loop.
+	if last, ok := o.wakeCooldowns[id]; ok && time.Since(last) < wakeCooldown {
+		o.mu.Unlock()
+		slog.Debug("wake cooldown active, skipping", "id", id, "elapsed", time.Since(last))
+		return nil
+	}
+	o.wakeCooldowns[id] = time.Now()
+	ci.LastWakeAttempt = time.Now()
 	oldState := ci.State
 	ci.State = StateStarting
 	o.mu.Unlock()
@@ -458,6 +496,11 @@ func (o *Orchestrator) WakeContainer(ctx context.Context, id string, reason stri
 	// poll — the HTTP request context will be cancelled when the API response
 	// is sent, but we need the start to complete asynchronously.
 	bgCtx := context.Background()
+	if o.dock == nil {
+		slog.Warn("dock client is nil, cannot start container", "id", id)
+		o.setState(id, StateDormant)
+		return fmt.Errorf("docker client not available")
+	}
 	if err := o.dock.Start(bgCtx, id); err != nil {
 		slog.Error("failed to start container", "id", id, "err", err)
 		o.setState(id, StateDormant)
