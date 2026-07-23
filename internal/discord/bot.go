@@ -446,6 +446,8 @@ func (b *Bot) refreshStatusEmbed() {
 		_, err := session.ChannelMessageEditEmbed(channelID, msgID, embed)
 		if err != nil {
 			slog.Debug("discord: failed to edit status embed, recreating", "err", err)
+			// Delete the old message before creating a new one to avoid duplicates.
+			_ = session.ChannelMessageDelete(channelID, msgID)
 			msg, err := session.ChannelMessageSendEmbed(channelID, embed)
 			if err != nil {
 				slog.Warn("discord: failed to send status embed", "err", err)
@@ -454,6 +456,11 @@ func (b *Bot) refreshStatusEmbed() {
 			b.mu.Lock()
 			b.statusMsgID = msg.ID
 			b.mu.Unlock()
+
+			b.cfg.DiscordStatusMsgID = msg.ID
+			if err := b.cfg.SaveDiscord(); err != nil {
+				slog.Warn("discord: failed to save status msg id", "err", err)
+			}
 		}
 	} else {
 		msg, err := session.ChannelMessageSendEmbed(channelID, embed)
@@ -504,8 +511,12 @@ func (b *Bot) clearStatusChannel() {
 			ids = append(ids, m.ID)
 		}
 		if err := session.ChannelMessagesBulkDelete(channelID, ids); err != nil {
-			slog.Warn("discord: failed to bulk-delete messages", "err", err)
-			return
+			slog.Warn("discord: bulk-delete failed (messages may be >14 days old), deleting individually", "err", err)
+			for _, id := range ids {
+				if derr := session.ChannelMessageDelete(channelID, id); derr != nil {
+					slog.Warn("discord: failed to delete individual message", "id", id, "err", derr)
+				}
+			}
 		}
 		slog.Info("discord: cleared status channel messages", "count", len(ids))
 
