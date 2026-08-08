@@ -546,10 +546,6 @@ function showLabelEditorInModal(container) {
         <input id="le_snap_timeout" type="number" step="0.25" value="${container.snap_timeout ? (container.snap_timeout / 3600).toFixed(2) : "0.25"}" placeholder="0.25">
       </div>
       <div class="label-edit-checkbox-row">
-        <input id="le_crash_detection" type="checkbox" checked>
-        <label for="le_crash_detection">Crash Detection</label>
-      </div>
-      <div class="label-edit-checkbox-row">
         <input id="le_delete_original" type="checkbox" checked>
         <label for="le_delete_original">Delete original container after recreation</label>
       </div>
@@ -566,10 +562,6 @@ function showLabelEditorInModal(container) {
       "thanos.enabled": "true",
       "thanos.display_name": modalBody.querySelector("#le_display_name").value,
       "thanos.snap_timeout": modalBody.querySelector("#le_snap_timeout").value,
-      "thanos.crash_detection": modalBody.querySelector("#le_crash_detection")
-        .checked
-        ? "true"
-        : "false",
     };
     const deleteOriginal = modalBody.querySelector(
       "#le_delete_original",
@@ -608,9 +600,6 @@ async function removeFromDashboard(id, card) {
     "thanos.enabled": "",
     "thanos.display_name": "",
     "thanos.snap_timeout": "",
-    "thanos.crash_detection": "",
-    "thanos.notify_discord": "",
-    "thanos.keep_running_on_boot": "",
   };
   try {
     await fetchJSON(`${API}/labels`, {
@@ -976,10 +965,6 @@ function showLabelEditor(container) {
         <input id="le_snap_timeout" type="number" step="0.25" value="${container.snap_timeout ? (container.snap_timeout / 3600).toFixed(2) : "0.25"}" placeholder="0.25">
       </div>
       <div class="label-edit-checkbox-row">
-        <input id="le_crash_detection" type="checkbox" checked>
-        <label for="le_crash_detection">Crash Detection</label>
-      </div>
-      <div class="label-edit-checkbox-row">
         <input id="le_delete_original" type="checkbox">
         <label for="le_delete_original">Delete original container after recreation</label>
       </div>
@@ -996,9 +981,6 @@ function showLabelEditor(container) {
       "thanos.enabled": "true",
       "thanos.display_name": row.querySelector("#le_display_name").value,
       "thanos.snap_timeout": row.querySelector("#le_snap_timeout").value,
-      "thanos.crash_detection": row.querySelector("#le_crash_detection").checked
-        ? "true"
-        : "false",
     };
     const deleteOriginal = row.querySelector("#le_delete_original").checked;
     try {
@@ -1036,9 +1018,6 @@ async function removeThanosLabels(container) {
     "thanos.enabled": "",
     "thanos.display_name": "",
     "thanos.snap_timeout": "",
-    "thanos.crash_detection": "",
-    "thanos.notify_discord": "",
-    "thanos.keep_running_on_boot": "",
   };
   try {
     await fetchJSON(`${API}/labels`, {

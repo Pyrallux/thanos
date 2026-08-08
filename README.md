@@ -119,9 +119,6 @@ Or use the **Manage Containers** button in the web UI to add/remove labels on ex
 | `thanos.enabled`              | `false` | Enables Thanos management                             |
 | `thanos.snap_timeout`         | `0.25`  | Hours of inactivity before shutdown (0 = never)       |
 | `thanos.display_name`         | name    | Friendly name for Discord/Web UI                      |
-| `thanos.notify_discord`       | `true`  | Send Discord notifications                            |
-| `thanos.crash_detection`      | `true`  | Monitor for unexpected exits                          |
-| `thanos.keep_running_on_boot` | `false` | Keep container running on Thanos startup (don't snap) |
 
 > The `thanos.snap_timeout` label is specified in **hours** (decimals supported, e.g. `0.25` = 15 minutes, `2` = 2 hours).
 

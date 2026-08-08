@@ -99,7 +99,6 @@ func (o *Orchestrator) handleEvent(ctx context.Context, msg events.Message) {
 		if !wasRunning {
 			o.StartIdleTimer(ci.ID, ci.SnapTimeout)
 		}
-		o.logEvent(ci.ID, "manual_start", "docker start event")
 		slog.Info("container started", "name", ci.DisplayName, "id", ci.ID, "was_running", wasRunning)
 
 		// Sync compose file in case the container was recreated with new config.
@@ -200,19 +199,12 @@ func (o *Orchestrator) handleDie(id string, exitCode int) {
 		// Clean exit (exit 0 or SIGTERM) OR Thanos was stopping the container
 		// (docker stop may result in 137 if the grace period expires and Docker
 		// escalates to SIGKILL — that's still a Thanos-initiated stop, not a crash).
-		stopReason := ci.StopReason
 		o.mu.Unlock()
-		eventType := "idle_shutdown"
-		if stopReason == "manual_stop" {
-			eventType = "manual_stop"
-		}
-		o.logEvent(id, eventType, "clean exit code="+strconv.Itoa(exitCode))
 		slog.Info("container exited cleanly", "name", ci.DisplayName, "id", id, "exitCode", exitCode)
 		o.setState(id, StateDormant)
 	} else {
 		// Unexpected exit while running = crash.
 		o.mu.Unlock()
-		o.logEvent(id, "crash", "exit_code="+strconv.Itoa(exitCode))
 		slog.Error("container crashed", "name", ci.DisplayName, "id", id, "exitCode", exitCode)
 		o.setState(id, StateCrashed)
 	}

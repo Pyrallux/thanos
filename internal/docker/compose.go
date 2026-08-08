@@ -29,11 +29,6 @@ func (c *Client) WriteComposeFile(ctx context.Context, id string) error {
 		return fmt.Errorf("inspect container for compose file: %w", err)
 	}
 
-	name := inspect.Name
-	if name != "" && name[0] == '/' {
-		name = name[1:]
-	}
-
 	content, err := generateComposeYAML(inspect)
 	if err != nil {
 		return fmt.Errorf("generate compose yaml: %w", err)
@@ -43,21 +38,26 @@ func (c *Client) WriteComposeFile(ctx context.Context, id string) error {
 		return fmt.Errorf("create compose dir: %w", err)
 	}
 
-	path := filepath.Join(composeDir, name+".yml")
+	path := filepath.Join(composeDir, composeFileName(inspect.Name))
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write compose file: %w", err)
 	}
 
-	slog.Info("compose file written", "container", name, "path", path)
+	slog.Info("compose file written", "container", composeFileName(inspect.Name), "path", path)
 	return nil
+}
+
+// composeFileName returns the compose file name for a container, derived
+// from its Docker name (with the leading "/" stripped).
+func composeFileName(dockerName string) string {
+	return strings.TrimPrefix(dockerName, "/") + ".yml"
 }
 
 // SyncComposeFiles ensures that every managed container has an up-to-date
 // docker-compose.yml file in the /docker directory, and removes compose
 // files for containers that are no longer managed.
 //
-// managedNames is the set of container names (without leading "/") that
-// are currently managed by Thanos.
+// managedIDs is the set of container IDs that are currently managed by Thanos.
 func (c *Client) SyncComposeFiles(ctx context.Context, managedIDs []string) error {
 	if err := os.MkdirAll(composeDir, 0o755); err != nil {
 		return fmt.Errorf("create compose dir: %w", err)
@@ -67,17 +67,23 @@ func (c *Client) SyncComposeFiles(ctx context.Context, managedIDs []string) erro
 	expectedFiles := make(map[string]bool)
 
 	for _, id := range managedIDs {
-		if err := c.WriteComposeFile(ctx, id); err != nil {
+		inspect, err := c.CLI.ContainerInspect(ctx, id)
+		if err != nil {
+			slog.Warn("failed to inspect container during compose sync", "container_id", id, "err", err)
+			continue
+		}
+		content, err := generateComposeYAML(inspect)
+		if err != nil {
+			slog.Warn("failed to generate compose yaml during sync", "container_id", id, "err", err)
+			continue
+		}
+		name := composeFileName(inspect.Name)
+		path := filepath.Join(composeDir, name)
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			slog.Warn("failed to write compose file during sync", "container_id", id, "err", err)
 			continue
 		}
-		// Record the expected filename.
-		inspect, err := c.CLI.ContainerInspect(ctx, id)
-		if err != nil {
-			continue
-		}
-		name := strings.TrimPrefix(inspect.Name, "/")
-		expectedFiles[name+".yml"] = true
+		expectedFiles[name] = true
 	}
 
 	// Remove stale compose files (files in /docker that don't correspond

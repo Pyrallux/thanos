@@ -47,8 +47,8 @@ func (s *Server) handleIcon(w http.ResponseWriter, r *http.Request) {
 	iconPath, err := s.cfg.GetKV("icon_path")
 	if err == nil && iconPath != "" {
 		// Validate the path is not a traversal and the file exists.
-		if abs, _ := filepath.Abs(iconPath); abs == iconPath || !strings.Contains(iconPath, "..") {
-			if data, ferr := os.ReadFile(iconPath); ferr == nil {
+		if abs, aerr := filepath.Abs(iconPath); aerr == nil && !strings.Contains(iconPath, "..") {
+			if data, ferr := os.ReadFile(abs); ferr == nil {
 				ext := strings.ToLower(filepath.Ext(iconPath))
 				mime := "image/jpeg"
 				if ext == ".png" {

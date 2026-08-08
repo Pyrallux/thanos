@@ -41,7 +41,6 @@ type ContainerInfo struct {
 	LastOnlineAt    time.Time // set when container leaves running state — when it was last actually online
 	StopReason      string    // set when transitioning to stopping ("manual_stop", "idle_timeout", etc.)
 	LastExitCode    int       // set when container exits (used for crash notifications)
-	LastWakeAttempt time.Time // set when WakeContainer is called — used for cooldown
 }
 
 // Orchestrator owns the container state machine, Docker event subscription,
@@ -195,21 +194,10 @@ func stateChangeBlurb(oldState, newState State, stopReason string) string {
 	}
 }
 
-// logEvent writes an entry to the event_log table.
-func (o *Orchestrator) logEvent(containerID, eventType, details string) {
-	_, err := o.db.Exec(
-		`INSERT INTO event_log (container_id, event_type, details) VALUES (?, ?, ?)`,
-		containerID, eventType, details)
-	if err != nil {
-		slog.Warn("failed to log event", "err", err)
-	}
-}
-
 // Run is the main orchestrator loop. It:
 //  1. Pings Docker and fails fast if unreachable.
 //  2. Discovers all thanos-managed containers and reconciles in-memory state.
-//  3. Stops containers unless keep_running_on_boot is set.
-//  4. Starts the Docker event subscription loop.
+//  3. Starts the Docker event subscription loop.
 func (o *Orchestrator) Run(ctx context.Context) error {
 	// Wait for Docker to be reachable.
 	for {
@@ -267,23 +255,24 @@ func (o *Orchestrator) periodicReconcile(ctx context.Context) {
 	}
 }
 
-// Reconcile queries Docker for all thanos-enabled containers, populates the
-// in-memory map, and stops any running containers that don't have
-// keep_running_on_boot=true (only on initial startup).
+// Reconcile queries Docker for all thanos-enabled containers and populates
+// the in-memory map. Running containers are never stopped on startup — if
+// Thanos is restarted while a server is running, it simply manages the
+// running server.
 func (o *Orchestrator) Reconcile(ctx context.Context) error {
-	return o.reconcile(ctx, true)
+	return o.reconcile(ctx)
 }
 
 // ReconcileNoStop reconciles without stopping running containers. Used by
 // periodic reconciliation and after label updates.
 func (o *Orchestrator) ReconcileNoStop(ctx context.Context) error {
-	return o.reconcile(ctx, false)
+	return o.reconcile(ctx)
 }
 
-// reconcile is the internal implementation. When initial is false (periodic
-// reconcile), running containers are NOT stopped — they may have been woken
-// by packet detection and should keep running.
-func (o *Orchestrator) reconcile(ctx context.Context, initial bool) error {
+// reconcile is the internal implementation. Running containers are never
+// stopped — they may have been woken by packet detection and should keep
+// running.
+func (o *Orchestrator) reconcile(ctx context.Context) error {
 	managed, err := o.dock.ListManaged(ctx)
 	if err != nil {
 		return err
@@ -302,21 +291,18 @@ func (o *Orchestrator) reconcile(ctx context.Context, initial bool) error {
 			continue
 		}
 
+		// Inspect once per container: gives port bindings for stopped
+		// containers and Docker's actual start time for running ones.
+		inspect, inspectErr := o.dock.Inspect(ctx, sc.ID)
 		ports := docker.ExtractHostPorts(sc.Ports)
-		// If no ports from summary (stopped container), inspect for bindings.
-		if len(ports) == 0 {
-			if inspect, err := o.dock.Inspect(ctx, sc.ID); err == nil {
-				ports = docker.ExtractHostPortsFromInspect(inspect)
-			}
+		if len(ports) == 0 && inspectErr == nil {
+			ports = docker.ExtractHostPortsFromInspect(inspect)
 		}
 
-		// Inspect to get Docker's actual start time for running containers.
 		var dockerStartedAt time.Time
-		if inspect, err := o.dock.Inspect(ctx, sc.ID); err == nil {
-			if inspect.State != nil && inspect.State.StartedAt != "" {
-				if t, err := time.Parse(time.RFC3339Nano, inspect.State.StartedAt); err == nil {
-					dockerStartedAt = t
-				}
+		if inspectErr == nil && inspect.State != nil && inspect.State.StartedAt != "" {
+			if t, err := time.Parse(time.RFC3339Nano, inspect.State.StartedAt); err == nil {
+				dockerStartedAt = t
 			}
 		}
 
@@ -375,10 +361,8 @@ func (o *Orchestrator) reconcile(ctx context.Context, initial bool) error {
 
 		// Determine current state from Docker's status string.
 		// Thanos inherits the current container state — it does NOT stop
-		// running containers on startup (unless keep_running_on_boot is
-		// false AND this is the very first run, which is handled by the
-		// setup wizard). This means if Thanos is restarted while a server
-		// is running, it will simply manage the running server.
+		// running containers on startup. This means if Thanos is restarted
+		// while a server is running, it will simply manage the running server.
 		isRunning := sc.State == "running"
 		if isRunning {
 			ci.State = StateRunning
@@ -410,12 +394,9 @@ func (o *Orchestrator) reconcile(ctx context.Context, initial bool) error {
 		// on every pass would keep resetting the timer, preventing the
 		// idle timeout from ever firing.
 		if ci.State == StateRunning && ci.SnapTimeout > 0 {
-			_, alreadyArmed := o.stateTimers[ci.ID]
-			o.mu.Unlock()
-			if !alreadyArmed {
+			if _, alreadyArmed := o.stateTimers[ci.ID]; !alreadyArmed {
 				o.StartIdleTimer(ci.ID, ci.SnapTimeout)
 			}
-			o.mu.Lock()
 		}
 	}
 	o.mu.Unlock()
@@ -481,7 +462,6 @@ func (o *Orchestrator) WakeContainer(ctx context.Context, id string, reason stri
 		return nil
 	}
 	o.wakeCooldowns[id] = time.Now()
-	ci.LastWakeAttempt = time.Now()
 	oldState := ci.State
 	ci.State = StateStarting
 	o.mu.Unlock()
@@ -489,7 +469,6 @@ func (o *Orchestrator) WakeContainer(ctx context.Context, id string, reason stri
 	// Notify watchers so the Discord bot can post a wake notification.
 	o.setState(id, StateStarting)
 
-	o.logEvent(id, "wake", reason)
 	slog.Info("waking container", "name", ci.DisplayName, "id", id, "reason", reason, "old_state", oldState)
 
 	// Use background context for the Docker start call and the wait-for-running
@@ -576,7 +555,6 @@ func (o *Orchestrator) onContainerRunning(id string) {
 		// start of the idle countdown.
 		o.StartIdleTimer(id, ci.SnapTimeout)
 	}
-	o.logEvent(id, "manual_start", "container reached running state")
 }
 
 // onContainerCrash handles unexpected container exits.
@@ -588,7 +566,6 @@ func (o *Orchestrator) onContainerCrash(id string, exitCode int) {
 	}
 	o.mu.Unlock()
 	o.setState(id, StateCrashed)
-	o.logEvent(id, "crash", fmt.Sprintf("exit_code=%d", exitCode))
 
 	slog.Error("container crashed", "id", id, "exitCode", exitCode)
 }
@@ -638,12 +615,6 @@ func (o *Orchestrator) Snap(ctx context.Context, id string, reason string) error
 
 	o.setState(id, StateStopping)
 	o.StopIdleTimer(id)
-	// Map the snap reason to the event_log event_type.
-	eventType := reason
-	if reason == "idle_timeout" {
-		eventType = "idle_shutdown"
-	}
-	o.logEvent(id, eventType, reason)
 	slog.Info("snapping container", "name", ci.DisplayName, "id", id, "reason", reason)
 
 	// Use background context — the HTTP request context will be cancelled when
