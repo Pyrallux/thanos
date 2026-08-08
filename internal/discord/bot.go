@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -83,6 +84,9 @@ func (b *Bot) Run(ctx context.Context) {
 	// Post or update the initial status embed.
 	b.refreshStatusEmbed()
 
+	// Set the initial presence.
+	b.updatePresence()
+
 	// Start periodic status updates (for uptime refresh).
 	go b.statusTicker(ctx)
 
@@ -101,7 +105,8 @@ func (b *Bot) Run(ctx context.Context) {
 	}
 }
 
-// statusTicker periodically refreshes the status embed to update uptime.
+// statusTicker periodically refreshes the status embed and the bot's
+// presence to update uptime and running counts.
 func (b *Bot) statusTicker(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -113,6 +118,7 @@ func (b *Bot) statusTicker(ctx context.Context) {
 			return
 		case <-ticker.C:
 			b.refreshStatusEmbed()
+			b.updatePresence()
 		}
 	}
 }
@@ -370,12 +376,13 @@ func (b *Bot) cmdSetLogChannel(s *discordgo.Session, i *discordgo.InteractionCre
 // ── State Watcher ──
 
 // OnStateChange implements orchestrator.StateWatcher. When a container
-// changes state, the bot posts an event notification to the log channel
-// and updates the persistent status embed.
+// changes state, the bot posts an event notification to the log channel,
+// updates the persistent status embed, and refreshes its presence.
 func (b *Bot) OnStateChange(ci *orchestrator.ContainerInfo) {
 	slog.Info("discord: state change", "container", ci.DisplayName, "state", ci.State)
 	b.postEventNotification(ci)
 	b.refreshStatusEmbed()
+	b.updatePresence()
 }
 
 // postEventNotification sends a message to the log channel when a container
@@ -480,6 +487,46 @@ func (b *Bot) refreshStatusEmbed() {
 }
 
 // ── Helpers ──
+
+// updatePresence dynamically updates the bot's Discord presence (the
+// "Playing ..." status line) to reflect the current state of managed
+// servers. When servers are running, the status lists them; when none are
+// running, it shows the stopped count.
+func (b *Bot) updatePresence() {
+	b.mu.Lock()
+	session := b.session
+	b.mu.Unlock()
+	if session == nil {
+		return
+	}
+
+	status := presenceStatus(b.orch.Containers())
+	if err := session.UpdateGameStatus(0, status); err != nil {
+		slog.Debug("discord: failed to update presence", "err", err)
+	}
+}
+
+// presenceStatus builds the "Playing ..." status text from the current
+// container states. Exposed as a pure function for testing.
+func presenceStatus(containers []*orchestrator.ContainerInfo) string {
+	running := make([]string, 0, len(containers))
+	for _, c := range containers {
+		if c.State == orchestrator.StateRunning {
+			running = append(running, c.DisplayName)
+		}
+	}
+
+	switch {
+	case len(running) == 0:
+		return fmt.Sprintf("All %d servers stopped", len(containers))
+	case len(running) == 1:
+		return fmt.Sprintf("%s online", running[0])
+	case len(running) <= 3:
+		return fmt.Sprintf("%s online", strings.Join(running, ", "))
+	default:
+		return fmt.Sprintf("%d servers online", len(running))
+	}
+}
 
 // clearStatusChannel removes all messages from the configured status channel.
 // This is called on startup so the channel only contains the current status
