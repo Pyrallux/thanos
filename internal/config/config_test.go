@@ -26,8 +26,8 @@ func TestIsBlacklisted_BlacklistMode(t *testing.T) {
 
 func TestIsBlacklisted_WhitelistMode(t *testing.T) {
 	cfg := &Config{
-		Whitelist:         parseBlacklist("192.168.1.0/24\n10.0.0.0/8"),
-		WhitelistEnabled:  true,
+		Whitelist:        parseBlacklist("192.168.1.0/24\n10.0.0.0/8"),
+		WhitelistEnabled: true,
 	}
 	cfg.mu = sync.RWMutex{}
 	// IP in whitelist — allowed (not blacklisted).
@@ -45,8 +45,8 @@ func TestIsBlacklisted_WhitelistMode(t *testing.T) {
 
 func TestIsBlacklisted_CommunityList(t *testing.T) {
 	cfg := &Config{
-		Blacklist:           nil,
-		communityBlacklist:  parseBlacklist("20.0.0.0/8"),
+		Blacklist:          nil,
+		communityBlacklist: parseBlacklist("20.0.0.0/8"),
 	}
 	cfg.mu = sync.RWMutex{}
 	if !cfg.IsBlacklisted("20.1.2.3") {
@@ -59,9 +59,9 @@ func TestIsBlacklisted_CommunityList(t *testing.T) {
 
 func TestIsBlacklisted_WhitelistOverridesBlacklist(t *testing.T) {
 	cfg := &Config{
-		Blacklist:          parseBlacklist("10.0.0.0/8"),
-		Whitelist:          parseBlacklist("10.0.0.0/8"),
-		WhitelistEnabled:   true,
+		Blacklist:        parseBlacklist("10.0.0.0/8"),
+		Whitelist:        parseBlacklist("10.0.0.0/8"),
+		WhitelistEnabled: true,
 	}
 	cfg.mu = sync.RWMutex{}
 	// Even though 10.x.x.x is in the blacklist, whitelist mode takes

@@ -13,44 +13,44 @@ type CommunityList struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	SourceURL   string `json:"source_url"`  // direct URL to the list data
-	InfoURL     string `json:"info_url"`    // human-readable about/source page
-	Format      string `json:"format"`      // "text" or "aws_json"
+	SourceURL   string `json:"source_url"` // direct URL to the list data
+	InfoURL     string `json:"info_url"`   // human-readable about/source page
+	Format      string `json:"format"`     // "text" or "aws_json"
 }
 
 // AvailableCommunityLists is the set of community lists offered in the UI.
 var AvailableCommunityLists = []CommunityList{
 	{
 		ID:          "firehol_level1",
-		Name:         "FireHOL Level 1",
-		Description:  "Maximum protection with minimum false positives. Composed from fullbogons, spamhaus_drop, dshield, and feodo. Safe for all servers. Updated daily.",
-		SourceURL:    "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset",
-		InfoURL:      "https://iplists.firehol.org/?ipset=firehol_level1",
-		Format:       "text",
+		Name:        "FireHOL Level 1",
+		Description: "Maximum protection with minimum false positives. Composed from fullbogons, spamhaus_drop, dshield, and feodo. Safe for all servers. Updated daily.",
+		SourceURL:   "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset",
+		InfoURL:     "https://iplists.firehol.org/?ipset=firehol_level1",
+		Format:      "text",
 	},
 	{
 		ID:          "spamhaus_drop",
-		Name:         "Spamhaus DROP",
-		Description:  "Don't Route Or Peer — hijacked/bogon ranges that no legitimate residential traffic comes from. Small, stable, very safe.",
-		SourceURL:    "https://www.spamhaus.org/drop/drop.txt",
-		InfoURL:      "https://www.spamhaus.org/drop/",
-		Format:       "text",
+		Name:        "Spamhaus DROP",
+		Description: "Don't Route Or Peer — hijacked/bogon ranges that no legitimate residential traffic comes from. Small, stable, very safe.",
+		SourceURL:   "https://www.spamhaus.org/drop/drop.txt",
+		InfoURL:     "https://www.spamhaus.org/drop/",
+		Format:      "text",
 	},
 	{
 		ID:          "spamhaus_edrop",
-		Name:         "Spamhaus EDROP",
-		Description:  "Extended DROP — additional hijacked/spoofed ranges. Complements the main DROP list.",
-		SourceURL:    "https://www.spamhaus.org/drop/edrop.txt",
-		InfoURL:      "https://www.spamhaus.org/drop/",
-		Format:       "text",
+		Name:        "Spamhaus EDROP",
+		Description: "Extended DROP — additional hijacked/spoofed ranges. Complements the main DROP list.",
+		SourceURL:   "https://www.spamhaus.org/drop/edrop.txt",
+		InfoURL:     "https://www.spamhaus.org/drop/",
+		Format:      "text",
 	},
 	{
 		ID:          "aws",
-		Name:         "AWS IP Ranges",
-		Description:  "Official Amazon Web Services IP ranges. Updated regularly by AWS.",
-		SourceURL:    "https://ip-ranges.amazonaws.com/ip-ranges.json",
-		InfoURL:      "https://docs.aws.amazon.com/vpc/latest/userguide/aws-ip-ranges.html",
-		Format:       "aws_json",
+		Name:        "AWS IP Ranges",
+		Description: "Official Amazon Web Services IP ranges. Updated regularly by AWS.",
+		SourceURL:   "https://ip-ranges.amazonaws.com/ip-ranges.json",
+		InfoURL:     "https://docs.aws.amazon.com/vpc/latest/userguide/aws-ip-ranges.html",
+		Format:      "aws_json",
 	},
 }
 
@@ -117,8 +117,12 @@ func parseTextList(raw string) []netip.Prefix {
 // parseAWSJSON parses the AWS ip-ranges.json format.
 func parseAWSJSON(body []byte) []netip.Prefix {
 	var data struct {
-		Prefixes       []struct{ IPPrefix string `json:"ip_prefix"` }       `json:"prefixes"`
-		IPv6Prefixes   []struct{ IPv6Prefix string `json:"ipv6_prefix"` }  `json:"ipv6_prefixes"`
+		Prefixes []struct {
+			IPPrefix string `json:"ip_prefix"`
+		} `json:"prefixes"`
+		IPv6Prefixes []struct {
+			IPv6Prefix string `json:"ipv6_prefix"`
+		} `json:"ipv6_prefixes"`
 	}
 	if err := json.Unmarshal(body, &data); err != nil {
 		slog.Warn("community list: failed to parse AWS JSON", "err", err)

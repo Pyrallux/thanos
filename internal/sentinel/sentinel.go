@@ -111,8 +111,6 @@ func (s *Sentinel) clearCaptureCancel() {
 	s.mu.Unlock()
 }
 
-
-
 // OnStateChange implements orchestrator.StateWatcher. When a container
 // transitions to dormant, we add its ports to the watched set. When it
 // transitions to running, we remove its ports from the watched set and add

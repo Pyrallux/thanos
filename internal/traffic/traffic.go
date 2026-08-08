@@ -18,16 +18,16 @@ type Logger struct {
 	// In-memory dedup for running-container traffic: containerID → srcIP →
 	// lastSeen. If an IP was seen in the last dedupWindow, skip the DB write.
 	// This prevents thousands of packets per second from flooding SQLite.
-	mu        sync.Mutex
-	recent    map[string]map[string]time.Time
+	mu          sync.Mutex
+	recent      map[string]map[string]time.Time
 	dedupWindow time.Duration
 }
 
 // New creates a Logger backed by the given database.
 func New(db *sql.DB) *Logger {
 	return &Logger{
-		db:         db,
-		recent:     make(map[string]map[string]time.Time),
+		db:          db,
+		recent:      make(map[string]map[string]time.Time),
 		dedupWindow: 60 * time.Second,
 	}
 }

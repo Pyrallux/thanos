@@ -40,12 +40,12 @@ type Config struct {
 	WebPasswordHash string
 
 	// IP blacklist (newline-separated CIDR patterns, e.g. "23.111.14.183/32")
-	Blacklist     []netip.Prefix
-	blacklistRaw  string
+	Blacklist    []netip.Prefix
+	blacklistRaw string
 
 	// IP whitelist — when enabled, only these IPs/CIDRs are allowed.
-	Whitelist      []netip.Prefix
-	whitelistRaw   string
+	Whitelist        []netip.Prefix
+	whitelistRaw     string
 	WhitelistEnabled bool
 
 	// Community blocklists — IDs that are enabled, and the merged prefixes.
@@ -60,7 +60,7 @@ type Config struct {
 var defaults = map[string]string{
 	"network_interface": "",
 	"log_level":         "info",
-	"api_port":           "4040",
+	"api_port":          "4040",
 }
 
 // httpClient is a shared client for community list downloads.

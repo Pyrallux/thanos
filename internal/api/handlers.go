@@ -430,8 +430,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			"discord_log_channel_id": s.cfg.DiscordLogChannelID,
 			"blacklist":              s.cfg.BlacklistString(),
 			"whitelist":              s.cfg.WhitelistString(),
-			"whitelist_enabled":     s.cfg.WhitelistEnabled,
-			"community_lists":       s.cfg.CommunityListsResponse(),
+			"whitelist_enabled":      s.cfg.WhitelistEnabled,
+			"community_lists":        s.cfg.CommunityListsResponse(),
 		})
 		return
 	case http.MethodPost:
@@ -441,16 +441,16 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Username            string `json:"username"`
-		Password            string `json:"password"`
-		ConfirmPassword     string `json:"confirm_password"`
-		NetworkInterface    string `json:"network_interface"`
-		DiscordGuildID      string `json:"discord_guild_id"`
-		DiscordChannelID    string `json:"discord_channel_id"`
-		DiscordLogChannelID string `json:"discord_log_channel_id"`
-		Blacklist           string `json:"blacklist"`
-		Whitelist           string `json:"whitelist"`
-		WhitelistEnabled    bool   `json:"whitelist_enabled"`
+		Username            string   `json:"username"`
+		Password            string   `json:"password"`
+		ConfirmPassword     string   `json:"confirm_password"`
+		NetworkInterface    string   `json:"network_interface"`
+		DiscordGuildID      string   `json:"discord_guild_id"`
+		DiscordChannelID    string   `json:"discord_channel_id"`
+		DiscordLogChannelID string   `json:"discord_log_channel_id"`
+		Blacklist           string   `json:"blacklist"`
+		Whitelist           string   `json:"whitelist"`
+		WhitelistEnabled    bool     `json:"whitelist_enabled"`
 		CommunityLists      []string `json:"community_lists"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

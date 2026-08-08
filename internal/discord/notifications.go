@@ -12,7 +12,7 @@ import (
 func WakeNotification(ci *orchestrator.ContainerInfo) *discordgo.MessageEmbed {
 	return &discordgo.MessageEmbed{
 		Title:       "Server Starting",
-		Description:  fmt.Sprintf("**%s** is starting up.", ci.DisplayName),
+		Description: fmt.Sprintf("**%s** is starting up.", ci.DisplayName),
 		Color:       0xFFFF00,
 	}
 }
@@ -23,7 +23,7 @@ func IdleShutdownNotification(ci *orchestrator.ContainerInfo, activeDuration str
 	timeoutMinutes := timeoutSeconds / 60
 	return &discordgo.MessageEmbed{
 		Title:       "Idle Shutdown",
-		Description:  fmt.Sprintf("**%s** has been snapped (idle shutdown).\nActive for %s. No traffic for %dm.", ci.DisplayName, activeDuration, timeoutMinutes),
+		Description: fmt.Sprintf("**%s** has been snapped (idle shutdown).\nActive for %s. No traffic for %dm.", ci.DisplayName, activeDuration, timeoutMinutes),
 		Color:       0x808080,
 	}
 }
@@ -32,7 +32,7 @@ func IdleShutdownNotification(ci *orchestrator.ContainerInfo, activeDuration str
 func ManualStopNotification(ci *orchestrator.ContainerInfo) *discordgo.MessageEmbed {
 	return &discordgo.MessageEmbed{
 		Title:       "Manual Stop",
-		Description:  fmt.Sprintf("**%s** has been stopped manually.", ci.DisplayName),
+		Description: fmt.Sprintf("**%s** has been stopped manually.", ci.DisplayName),
 		Color:       0x808080,
 	}
 }
@@ -41,7 +41,7 @@ func ManualStopNotification(ci *orchestrator.ContainerInfo) *discordgo.MessageEm
 func CrashNotification(ci *orchestrator.ContainerInfo, exitCode int) *discordgo.MessageEmbed {
 	return &discordgo.MessageEmbed{
 		Title:       "Server Crashed",
-		Description:  fmt.Sprintf("**%s** has crashed unexpectedly.\nExit Code: %d\nThe server has been left stopped to protect save data.\nUse /start %s to restart manually.", ci.DisplayName, exitCode, ci.DisplayName),
+		Description: fmt.Sprintf("**%s** has crashed unexpectedly.\nExit Code: %d\nThe server has been left stopped to protect save data.\nUse /start %s to restart manually.", ci.DisplayName, exitCode, ci.DisplayName),
 		Color:       0xFF0000,
 	}
 }

@@ -18,11 +18,11 @@ package orchestrator
 
 var validTransitions = map[State]map[State]bool{
 	StateUnmanaged: {StateDormant: true},
-	StateDormant:    {StateStarting: true, StateCrashed: true},
-	StateStarting:   {StateRunning: true, StateDormant: true, StateCrashed: true},
-	StateRunning:     {StateStopping: true, StateCrashed: true, StateDormant: true},
-	StateStopping:    {StateDormant: true, StateCrashed: true},
-	StateCrashed:      {StateDormant: true, StateStarting: true},
+	StateDormant:   {StateStarting: true, StateCrashed: true},
+	StateStarting:  {StateRunning: true, StateDormant: true, StateCrashed: true},
+	StateRunning:   {StateStopping: true, StateCrashed: true, StateDormant: true},
+	StateStopping:  {StateDormant: true, StateCrashed: true},
+	StateCrashed:   {StateDormant: true, StateStarting: true},
 }
 
 // CanTransition reports whether transitioning from→to is valid.
