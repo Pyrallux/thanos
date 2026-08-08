@@ -3,6 +3,7 @@
 *.exe
 thanos
 thanos.exe
+coverage.out
 
 # SQLite database (contains credentials, tokens, config)
 thanos.db*

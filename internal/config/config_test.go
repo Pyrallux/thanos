@@ -1,8 +1,11 @@
 package config
 
 import (
+	"database/sql"
 	"sync"
 	"testing"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestIsBlacklisted_BlacklistMode(t *testing.T) {
@@ -99,4 +102,153 @@ func TestParseTextList(t *testing.T) {
 			t.Errorf("expected /32 for bare IP, got /%d", p.Bits())
 		}
 	}
+}
+
+// TestParseBlacklistEdgeCases verifies that parseBlacklist handles empty
+// input, comments, bare IPs, invalid entries, and IPv6. A regression here
+// would cause the blacklist/whitelist to silently ignore or reject entries,
+// breaking IP filtering.
+func TestParseBlacklistEdgeCases(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  int // expected number of prefixes
+	}{
+		{"empty", "", 0},
+		{"only comments", "# all comments\n; nothing here\n", 0},
+		{"bare ipv4 gets /32", "203.0.113.5", 1},
+		{"bare ipv6 gets /128", "::1", 1},
+		{"valid cidr", "10.0.0.0/8", 1},
+		{"invalid entry skipped", "not-an-ip\n10.0.0.0/8", 1},
+		{"mixed valid and invalid", "# header\n10.0.0.0/8\nbad\n192.168.1.0/24", 2},
+		{"whitespace trimmed", "  10.0.0.0/8  \n", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseBlacklist(tt.input)
+			if len(got) != tt.want {
+				t.Errorf("parseBlacklist(%q) = %d prefixes, want %d", tt.input, len(got), tt.want)
+			}
+		})
+	}
+}
+
+// TestParseAWSJSON verifies that the AWS ip-ranges.json format is parsed
+// correctly, extracting both IPv4 and IPv6 prefixes. This powers the
+// community blocklist feature for AWS IP ranges.
+func TestParseAWSJSON(t *testing.T) {
+	body := []byte(`{
+		"prefixes": [
+			{"ip_prefix": "3.2.34.0/26"},
+			{"ip_prefix": "15.230.56.0/22"},
+			{"ip_prefix": "invalid-prefix"}
+		],
+		"ipv6_prefixes": [
+			{"ipv6_prefix": "2600:1f18:4000::/36"}
+		]
+	}`)
+	prefixes := parseAWSJSON(body)
+	// 2 valid IPv4 + 1 valid IPv6 = 3. The invalid one is skipped.
+	if len(prefixes) != 3 {
+		t.Fatalf("parseAWSJSON = %d prefixes, want 3", len(prefixes))
+	}
+}
+
+// TestParseAWSJSONInvalid verifies that invalid JSON returns nil without
+// panicking.
+func TestParseAWSJSONInvalid(t *testing.T) {
+	prefixes := parseAWSJSON([]byte("not json"))
+	if prefixes != nil {
+		t.Errorf("parseAWSJSON(invalid) = %v, want nil", prefixes)
+	}
+}
+
+// TestSaveKVAndGetKV verifies the key-value config persistence round-trip.
+// This is how the settings screen saves all configuration — a regression
+// would silently lose settings on restart.
+func TestSaveKVAndGetKV(t *testing.T) {
+	db := newConfigTestDB(t)
+	cfg := &Config{DB: db}
+
+	// Key doesn't exist → empty string, no error.
+	val, err := cfg.GetKV("nonexistent")
+	if err != nil {
+		t.Fatalf("GetKV(nonexistent): %v", err)
+	}
+	if val != "" {
+		t.Errorf("GetKV(nonexistent) = %q, want empty", val)
+	}
+
+	// Save and read back.
+	if err := cfg.SaveKV("api_port", "4040"); err != nil {
+		t.Fatalf("SaveKV: %v", err)
+	}
+	val, err = cfg.GetKV("api_port")
+	if err != nil {
+		t.Fatalf("GetKV: %v", err)
+	}
+	if val != "4040" {
+		t.Errorf("GetKV(api_port) = %q, want %q", val, "4040")
+	}
+
+	// Upsert — update existing key.
+	if err := cfg.SaveKV("api_port", "8080"); err != nil {
+		t.Fatalf("SaveKV upsert: %v", err)
+	}
+	val, err = cfg.GetKV("api_port")
+	if err != nil {
+		t.Fatalf("GetKV after upsert: %v", err)
+	}
+	if val != "8080" {
+		t.Errorf("GetKV(api_port) after upsert = %q, want %q", val, "8080")
+	}
+}
+
+// TestSaveBlacklistRoundTrip verifies that SaveBlacklist persists the raw
+// text to the DB and updates the in-memory list, and that BlacklistString
+// returns the raw text. This is the save/load path for the settings screen.
+func TestSaveBlacklistRoundTrip(t *testing.T) {
+	db := newConfigTestDB(t)
+	cfg := &Config{DB: db}
+	cfg.mu = sync.RWMutex{}
+
+	raw := "10.0.0.0/8\n192.168.1.5"
+	if err := cfg.SaveBlacklist(raw); err != nil {
+		t.Fatalf("SaveBlacklist: %v", err)
+	}
+
+	// In-memory list updated.
+	if len(cfg.Blacklist) != 2 {
+		t.Errorf("Blacklist = %d entries, want 2", len(cfg.Blacklist))
+	}
+	// Raw string preserved for UI.
+	if cfg.BlacklistString() != raw {
+		t.Errorf("BlacklistString() = %q, want %q", cfg.BlacklistString(), raw)
+	}
+	// Persisted to DB.
+	val, err := cfg.GetKV("blacklist")
+	if err != nil {
+		t.Fatalf("GetKV(blacklist): %v", err)
+	}
+	if val != raw {
+		t.Errorf("GetKV(blacklist) = %q, want %q", val, raw)
+	}
+}
+
+// newConfigTestDB creates an in-memory SQLite database with the thanos_config
+// table, matching the production schema.
+func newConfigTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	_, err = db.Exec(`CREATE TABLE thanos_config (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	)`)
+	if err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	return db
 }
