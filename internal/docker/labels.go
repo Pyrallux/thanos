@@ -13,18 +13,22 @@ const (
 	LabelSnapTimeout       = "thanos.snap_timeout"
 	LabelKeepRunningOnBoot = "thanos.keep_running_on_boot"
 	LabelDisplayName       = "thanos.display_name"
-	LabelNotifyDiscord      = "thanos.notify_discord"
+	LabelNotifyDiscord     = "thanos.notify_discord"
 	LabelCrashDetection    = "thanos.crash_detection"
+	LabelWatchTCP          = "thanos.watch_tcp"
+	LabelWatchUDP          = "thanos.watch_udp"
 )
 
 // Labels holds the parsed Thanos configuration for a single container.
 type Labels struct {
 	Enabled           bool
-	SnapTimeout       int  // seconds (converted from hours in the label); 0 = never auto-shutdown
+	SnapTimeout       int // seconds (converted from hours in the label); 0 = never auto-shutdown
 	KeepRunningOnBoot bool
 	DisplayName       string
 	NotifyDiscord     bool
 	CrashDetection    bool
+	WatchTCP          bool // wake/idle-reset on TCP connections to this container's ports
+	WatchUDP          bool // wake/idle-reset on UDP traffic to this container's ports
 }
 
 // DefaultSnapTimeoutHours is the default snap timeout in hours.
@@ -47,6 +51,8 @@ func ParseLabelMap(m map[string]string) Labels {
 		DisplayName:       m[LabelDisplayName],
 		NotifyDiscord:     true,
 		CrashDetection:    true,
+		WatchTCP:          true,
+		WatchUDP:          true,
 	}
 	if v := m[LabelSnapTimeout]; v != "" {
 		if n, err := strconv.ParseFloat(v, 64); err == nil {
@@ -58,6 +64,12 @@ func ParseLabelMap(m map[string]string) Labels {
 	}
 	if v := m[LabelCrashDetection]; v != "" {
 		l.CrashDetection = strings.EqualFold(v, "true")
+	}
+	if v := m[LabelWatchTCP]; v != "" {
+		l.WatchTCP = strings.EqualFold(v, "true")
+	}
+	if v := m[LabelWatchUDP]; v != "" {
+		l.WatchUDP = strings.EqualFold(v, "true")
 	}
 	return l
 }

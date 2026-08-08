@@ -16,8 +16,10 @@ import (
 // TCP keepalive ACKs and ongoing session packets are ignored so the
 // heartbeat timestamp only updates when a player actually connects.
 //
-// If no ports are watched, returns a no-match expression.
-func buildCombinedBPFFilter(dormantPorts, runningPorts map[int]string) string {
+// Per-port protocol filtering is honored: a port whose watch spec has
+// tcp=false is excluded from the TCP clauses, and udp=false from the UDP
+// clauses. If no ports are watched, returns a no-match expression.
+func buildCombinedBPFFilter(dormantPorts, runningPorts map[int]watchedPort) string {
 	if len(dormantPorts) == 0 && len(runningPorts) == 0 {
 		return "udp port 0" // never matches
 	}
@@ -25,31 +27,50 @@ func buildCombinedBPFFilter(dormantPorts, runningPorts map[int]string) string {
 	var parts []string
 
 	// TCP SYN to dormant ports (wake-on-connect).
-	if len(dormantPorts) > 0 {
-		dormantPortList := portList(dormantPorts)
+	if tcpPorts := tcpPortList(dormantPorts); len(tcpPorts) > 0 {
 		parts = append(parts, "(tcp[tcpflags] & tcp-syn != 0 and ("+
-			strings.Join(dormantPortList, " or ")+"))")
-		// Also match UDP to dormant ports.
-		parts = append(parts, "(udp and ("+strings.Join(dormantPortList, " or ")+"))")
+			strings.Join(tcpPorts, " or ")+"))")
+	}
+	// UDP to dormant ports.
+	if udpPorts := udpPortList(dormantPorts); len(udpPorts) > 0 {
+		parts = append(parts, "(udp and ("+strings.Join(udpPorts, " or ")+"))")
 	}
 
 	// TCP SYN and UDP to running ports (new connections only, not keepalives).
-	if len(runningPorts) > 0 {
-		runningPortList := portList(runningPorts)
+	if tcpPorts := tcpPortList(runningPorts); len(tcpPorts) > 0 {
 		parts = append(parts, "(tcp[tcpflags] & tcp-syn != 0 and ("+
-			strings.Join(runningPortList, " or ")+"))")
-		parts = append(parts, "(udp and ("+strings.Join(runningPortList, " or ")+"))")
+			strings.Join(tcpPorts, " or ")+"))")
+	}
+	if udpPorts := udpPortList(runningPorts); len(udpPorts) > 0 {
+		parts = append(parts, "(udp and ("+strings.Join(udpPorts, " or ")+"))")
 	}
 
+	if len(parts) == 0 {
+		return "udp port 0" // never matches
+	}
 	return strings.Join(parts, " or ")
 }
 
-// portList returns a sorted slice of "dst port N" or "src port N" strings
-// for the given port map, covering both directions.
-func portList(ports map[int]string) []string {
+// tcpPortList returns a sorted slice of "dst port N" strings for the ports
+// whose watch spec has TCP enabled.
+func tcpPortList(ports map[int]watchedPort) []string {
+	return portList(ports, func(wp watchedPort) bool { return wp.tcp })
+}
+
+// udpPortList returns a sorted slice of "dst port N" strings for the ports
+// whose watch spec has UDP enabled.
+func udpPortList(ports map[int]watchedPort) []string {
+	return portList(ports, func(wp watchedPort) bool { return wp.udp })
+}
+
+// portList returns a sorted slice of "dst port N" strings for the given
+// port map, filtered by the predicate.
+func portList(ports map[int]watchedPort, include func(watchedPort) bool) []string {
 	sorted := make([]int, 0, len(ports))
-	for p := range ports {
-		sorted = append(sorted, p)
+	for p, wp := range ports {
+		if include(wp) {
+			sorted = append(sorted, p)
+		}
 	}
 	sort.Ints(sorted)
 

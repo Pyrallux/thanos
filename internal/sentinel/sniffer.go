@@ -125,10 +125,16 @@ func (s *Sentinel) handlePacket(pkt gopacket.Packet) {
 
 	// Check if this is traffic to a dormant container (wake-on-connect).
 	s.mu.RLock()
-	cid := s.watchedPorts[dstPort]
+	wp, ok := s.watchedPorts[dstPort]
 	s.mu.RUnlock()
 
-	if cid != "" {
+	if ok {
+		cid := wp.containerID
+		if !protocolWatched(proto, wp) {
+			slog.Debug("wake-on-connect: packet protocol not watched for container",
+				"proto", proto, "dst_port", dstPort, "container_id", cid)
+			return
+		}
 		if blocked {
 			slog.Info("wake-on-connect: blocked packet from blacklisted IP",
 				"src_ip", srcIP, "dst_port", dstPort, "container_id", cid)
@@ -157,14 +163,18 @@ func (s *Sentinel) handlePacket(pkt gopacket.Packet) {
 	// Check if this is traffic on a running container's ports (idle reset).
 	// Copy the map under lock so iteration is safe from concurrent writes.
 	s.mu.RLock()
-	runningPortsCopy := make(map[int]string, len(s.runningPorts))
+	runningPortsCopy := make(map[int]watchedPort, len(s.runningPorts))
 	for k, v := range s.runningPorts {
 		runningPortsCopy[k] = v
 	}
 	s.mu.RUnlock()
 
-	for port, rcid := range runningPortsCopy {
+	for port, rwp := range runningPortsCopy {
 		if port == dstPort || port == srcPort {
+			if !protocolWatched(proto, rwp) {
+				continue
+			}
+			rcid := rwp.containerID
 			// Log ongoing traffic (dedup'd in the logger), including blocked.
 			if s.tlog != nil && srcIP != "" {
 				ci := s.orch.GetContainer(rcid)
@@ -180,6 +190,20 @@ func (s *Sentinel) handlePacket(pkt gopacket.Packet) {
 				s.orch.ResetIdleTimer(rcid)
 			}
 		}
+	}
+}
+
+// protocolWatched reports whether the given protocol ("tcp", "udp", or "")
+// is enabled for the watch spec. Unknown protocols (e.g. ICMP) are never
+// watched — the BPF filter only captures TCP/UDP anyway.
+func protocolWatched(proto string, wp watchedPort) bool {
+	switch proto {
+	case "tcp":
+		return wp.tcp
+	case "udp":
+		return wp.udp
+	default:
+		return false
 	}
 }
 

@@ -550,6 +550,14 @@ function showLabelEditorInModal(container) {
         <label for="le_crash_detection">Crash Detection</label>
       </div>
       <div class="label-edit-checkbox-row">
+        <input id="le_watch_tcp" type="checkbox" checked>
+        <label for="le_watch_tcp">Wake on TCP connections</label>
+      </div>
+      <div class="label-edit-checkbox-row">
+        <input id="le_watch_udp" type="checkbox" checked>
+        <label for="le_watch_udp">Wake on UDP traffic</label>
+      </div>
+      <div class="label-edit-checkbox-row">
         <input id="le_delete_original" type="checkbox" checked>
         <label for="le_delete_original">Delete original container after recreation</label>
       </div>
@@ -568,6 +576,12 @@ function showLabelEditorInModal(container) {
       "thanos.snap_timeout": modalBody.querySelector("#le_snap_timeout").value,
       "thanos.crash_detection": modalBody.querySelector("#le_crash_detection")
         .checked
+        ? "true"
+        : "false",
+      "thanos.watch_tcp": modalBody.querySelector("#le_watch_tcp").checked
+        ? "true"
+        : "false",
+      "thanos.watch_udp": modalBody.querySelector("#le_watch_udp").checked
         ? "true"
         : "false",
     };
@@ -611,6 +625,8 @@ async function removeFromDashboard(id, card) {
     "thanos.crash_detection": "",
     "thanos.notify_discord": "",
     "thanos.keep_running_on_boot": "",
+    "thanos.watch_tcp": "",
+    "thanos.watch_udp": "",
   };
   try {
     await fetchJSON(`${API}/labels`, {
@@ -980,6 +996,14 @@ function showLabelEditor(container) {
         <label for="le_crash_detection">Crash Detection</label>
       </div>
       <div class="label-edit-checkbox-row">
+        <input id="le_watch_tcp" type="checkbox" checked>
+        <label for="le_watch_tcp">Wake on TCP connections</label>
+      </div>
+      <div class="label-edit-checkbox-row">
+        <input id="le_watch_udp" type="checkbox" checked>
+        <label for="le_watch_udp">Wake on UDP traffic</label>
+      </div>
+      <div class="label-edit-checkbox-row">
         <input id="le_delete_original" type="checkbox">
         <label for="le_delete_original">Delete original container after recreation</label>
       </div>
@@ -997,6 +1021,12 @@ function showLabelEditor(container) {
       "thanos.display_name": row.querySelector("#le_display_name").value,
       "thanos.snap_timeout": row.querySelector("#le_snap_timeout").value,
       "thanos.crash_detection": row.querySelector("#le_crash_detection").checked
+        ? "true"
+        : "false",
+      "thanos.watch_tcp": row.querySelector("#le_watch_tcp").checked
+        ? "true"
+        : "false",
+      "thanos.watch_udp": row.querySelector("#le_watch_udp").checked
         ? "true"
         : "false",
     };
@@ -1039,6 +1069,8 @@ async function removeThanosLabels(container) {
     "thanos.crash_detection": "",
     "thanos.notify_discord": "",
     "thanos.keep_running_on_boot": "",
+    "thanos.watch_tcp": "",
+    "thanos.watch_udp": "",
   };
   try {
     await fetchJSON(`${API}/labels`, {
