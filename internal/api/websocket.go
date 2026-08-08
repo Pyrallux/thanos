@@ -174,11 +174,11 @@ func (s *Server) handleStatsStream(w http.ResponseWriter, r *http.Request) {
 		statValues := computeStats(stats)
 
 		msg := map[string]any{
-			"type":       "stats",
-			"cpu":        statValues["cpu"],
-			"mem":        statValues["mem"],
+			"type":        "stats",
+			"cpu":         statValues["cpu"],
+			"mem":         statValues["mem"],
 			"mem_percent": statValues["mem_percent"],
-			"timestamp":  time.Now().Format(time.RFC3339),
+			"timestamp":   time.Now().Format(time.RFC3339),
 		}
 
 		if err := conn.WriteJSON(msg); err != nil {

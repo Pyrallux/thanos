@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -18,6 +19,16 @@ import (
 )
 
 func main() {
+	// --version prints the build version (injected via ldflags) and exits.
+	// Used by the CI pipeline to verify the binary was built correctly.
+	showVersion := flag.Bool("version", false, "print build version and exit")
+	flag.Parse()
+
+	if *showVersion {
+		println("thanos", version.Version)
+		return
+	}
+
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	// isWindowsService returns true when the process was launched by the

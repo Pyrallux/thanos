@@ -59,4 +59,3 @@ func portList(ports map[int]string) []string {
 	}
 	return out
 }
-

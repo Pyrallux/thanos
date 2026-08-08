@@ -13,14 +13,14 @@ const (
 	LabelSnapTimeout       = "thanos.snap_timeout"
 	LabelKeepRunningOnBoot = "thanos.keep_running_on_boot"
 	LabelDisplayName       = "thanos.display_name"
-	LabelNotifyDiscord      = "thanos.notify_discord"
+	LabelNotifyDiscord     = "thanos.notify_discord"
 	LabelCrashDetection    = "thanos.crash_detection"
 )
 
 // Labels holds the parsed Thanos configuration for a single container.
 type Labels struct {
 	Enabled           bool
-	SnapTimeout       int  // seconds (converted from hours in the label); 0 = never auto-shutdown
+	SnapTimeout       int // seconds (converted from hours in the label); 0 = never auto-shutdown
 	KeepRunningOnBoot bool
 	DisplayName       string
 	NotifyDiscord     bool

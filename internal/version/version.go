@@ -2,7 +2,7 @@
 //
 // The version is injected at build time via -ldflags:
 //
-//	go build -ldflags "-X thanos/internal/version.version=v1.0.0" ./cmd/thanos
+//	go build -ldflags "-X thanos/internal/version.Version=v1.0.0" ./cmd/thanos
 //
 // The build scripts (scripts/build.ps1, scripts/run.ps1) automatically
 // derive the version from `git describe --tags`. To cut a new release:

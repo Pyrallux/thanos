@@ -29,12 +29,12 @@ const (
 
 // ContainerInfo holds runtime metadata about a managed container.
 type ContainerInfo struct {
-	ID            string
-	Name          string
-	DisplayName   string
-	State         State
-	Ports         []int
-	SnapTimeout   int
+	ID              string
+	Name            string
+	DisplayName     string
+	State           State
+	Ports           []int
+	SnapTimeout     int
 	Labels          docker.Labels
 	StartedAt       time.Time // set when container transitions to running
 	LastTrafficAt   time.Time // set by StartIdleTimer; reflects when the idle countdown (re)started

@@ -217,7 +217,7 @@ func ExtractHostPorts(ports []container.Port) []int {
 // container's InspectResponse. This works for stopped containers too,
 // since the port bindings are stored in HostConfig.
 func ExtractHostPortsFromInspect(inspect container.InspectResponse) []int {
-	if inspect.HostConfig == nil || inspect.HostConfig.PortBindings == nil {
+	if inspect.ContainerJSONBase == nil || inspect.HostConfig == nil || inspect.HostConfig.PortBindings == nil {
 		return []int{}
 	}
 	seen := map[int]bool{}
