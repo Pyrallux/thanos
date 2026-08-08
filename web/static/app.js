@@ -216,12 +216,18 @@ function updateCardInPlace(card, c) {
       lastOnlineEl.remove();
     }
     // Update or insert last-online for dormant/crashed containers.
-    if (isDormant && c.last_started) {
-      const html = `<span class="last-online" title="Last online ${new Date(c.last_started).toLocaleString()}">Last online ${timeAgo(new Date(c.last_started))}</span>`;
-      if (lastOnlineEl) {
-        lastOnlineEl.outerHTML = html;
-      } else {
-        nameEl.insertAdjacentHTML("beforeend", html);
+    if (isDormant) {
+      // Prefer last_online (when the server actually went offline) over
+      // last_started (when it booted). Fall back if last_online is missing
+      // (e.g. older server still running, or never been online).
+      const onlineTs = c.last_online || c.last_started;
+      if (onlineTs) {
+        const html = `<span class="last-online" title="Last online ${new Date(onlineTs).toLocaleString()}">Last online ${timeAgo(new Date(onlineTs))}</span>`;
+        if (lastOnlineEl) {
+          lastOnlineEl.outerHTML = html;
+        } else {
+          nameEl.insertAdjacentHTML("beforeend", html);
+        }
       }
     }
     // Update the name text (first child node).
@@ -335,9 +341,10 @@ function renderCard(c) {
     startedInfo = timeAgo(new Date(c.last_started));
   }
   const cached = containerCache.get(c.id);
+  const lastOnlineTs = c.last_online || c.last_started;
   const lastOnlineHtml =
-    isDormant && c.last_started
-      ? `<span class="last-online" title="Last online ${new Date(c.last_started).toLocaleString()}">Last online ${timeAgo(new Date(c.last_started))}</span>`
+    isDormant && lastOnlineTs
+      ? `<span class="last-online" title="Last online ${new Date(lastOnlineTs).toLocaleString()}">Last online ${timeAgo(new Date(lastOnlineTs))}</span>`
       : "";
   return `
     <div class="container-card" data-id="${c.id}">
@@ -394,6 +401,19 @@ function timeAgo(date) {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ${minutes % 60}m ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+// cardName extracts just the server name from a container card. The .name
+// element also holds a .last-online span for dormant/crashed containers, so
+// `.name.textContent` would concatenate them with no separator (issue #7).
+// The first child node is always the bare text node set by renderCard.
+function cardName(card) {
+  const nameEl = card.querySelector(".name");
+  if (!nameEl) return "";
+  const first = nameEl.firstChild;
+  return first && first.nodeType === Node.TEXT_NODE
+    ? first.textContent.trim()
+    : nameEl.textContent.trim();
 }
 
 let actionsBound = false;
@@ -577,7 +597,7 @@ function showLabelEditorInModal(container) {
 }
 
 async function removeFromDashboard(id, card) {
-  const name = card.querySelector(".name").textContent;
+  const name = cardName(card);
   if (
     !confirm(
       `Remove "${name}" from Thanos management? The container will be recreated without Thanos labels.`,
@@ -674,49 +694,108 @@ function renderSettingsModal(data) {
     })
     .join("");
 
+  const communityLists = (data.community_lists || [])
+    .map((l) => {
+      const checked = l.enabled ? "checked" : "";
+      return `
+        <div class="community-list-item">
+          <div class="community-list-header">
+            <label class="checkbox-label">
+              <input type="checkbox" class="community-list-checkbox" data-list-id="${escapeHTML(l.id)}" ${checked}>
+              <span class="community-list-name">${escapeHTML(l.name)}</span>
+            </label>
+            <a href="${escapeHTML(l.info_url)}" target="_blank" rel="noopener" class="community-list-info" title="About this list">ⓘ</a>
+          </div>
+          <p class="community-list-desc">${escapeHTML(l.description)}</p>
+          <a href="${escapeHTML(l.source_url)}" target="_blank" rel="noopener" class="community-list-source">${escapeHTML(l.source_url)}</a>
+        </div>`;
+    })
+    .join("");
+
+  const whitelistEnabled = data.whitelist_enabled;
+
   modalBody.innerHTML = `
     <div class="modal-form">
-      <div>
-        <label for="settings_username">Admin Username</label>
-        <input id="settings_username" value="${escapeHTML(data.username || "")}" autocomplete="username">
-      </div>
-      <div>
-        <label for="settings_password">New Password</label>
-        <input id="settings_password" type="password" placeholder="Leave blank to keep current password" autocomplete="new-password">
-      </div>
-      <div>
-        <label for="settings_password2">Confirm New Password</label>
-        <input id="settings_password2" type="password" placeholder="Repeat the new password" autocomplete="new-password">
-      </div>
-      <div>
-        <label for="settings_iface">Target Adapter</label>
-        <select id="settings_iface">
-          ${options}
-        </select>
-      </div>
-      <p class="modal-note modal-warning">
-        Use <strong>Loopback</strong> to test <strong>127.0.0.1</strong> connections on Windows. Use your LAN adapter for connections from other machines.
-      </p>
-
-      <div class="section-title">Discord</div>
-      <div>
-        <label for="settings_guild_id">Guild ID</label>
-        <input id="settings_guild_id" value="${escapeHTML(data.discord_guild_id || "")}" placeholder="Discord guild ID">
-      </div>
-      <div>
-        <label for="settings_status_channel">Status Channel ID</label>
-        <input id="settings_status_channel" value="${escapeHTML(data.discord_channel_id || "")}" placeholder="Channel for status embed">
-      </div>
-      <div>
-        <label for="settings_log_channel">Log Channel ID</label>
-        <input id="settings_log_channel" value="${escapeHTML(data.discord_log_channel_id || "")}" placeholder="Channel for event notifications">
+      <div class="settings-tabs">
+        <button class="settings-tab active" data-tab="general">General</button>
+        <button class="settings-tab" data-tab="discord">Discord</button>
+        <button class="settings-tab" data-tab="ip">IP Filtering</button>
       </div>
 
-      <div class="section-title">IP Blacklist</div>
-      <div>
-        <label for="settings_blacklist">Ignored IP Patterns (one per line)</label>
-        <textarea id="settings_blacklist" rows="5" placeholder="23.111.14.183/32&#10;10.0.0.0/8&#10;# Lines starting with # are ignored">${escapeHTML(data.blacklist || "")}</textarea>
-        <p class="modal-note">Packets from these IPs/subnets will be silently dropped. Supports CIDR notation and bare IPs. One entry per line.</p>
+      <div class="settings-panel active" data-panel="general">
+        <div>
+          <label for="settings_username">Admin Username</label>
+          <input id="settings_username" value="${escapeHTML(data.username || "")}" autocomplete="username">
+        </div>
+        <div>
+          <label for="settings_password">New Password</label>
+          <input id="settings_password" type="password" placeholder="Leave blank to keep current password" autocomplete="new-password">
+        </div>
+        <div>
+          <label for="settings_password2">Confirm New Password</label>
+          <input id="settings_password2" type="password" placeholder="Repeat the new password" autocomplete="new-password">
+        </div>
+        <div>
+          <label for="settings_iface">Target Adapter</label>
+          <select id="settings_iface">
+            ${options}
+          </select>
+        </div>
+        <p class="modal-note modal-warning">
+          Use <strong>Loopback</strong> to test <strong>127.0.0.1</strong> connections on Windows. Use your LAN adapter for connections from other machines.
+        </p>
+      </div>
+
+      <div class="settings-panel" data-panel="discord">
+        <div>
+          <label for="settings_guild_id">Guild ID</label>
+          <input id="settings_guild_id" value="${escapeHTML(data.discord_guild_id || "")}" placeholder="Discord guild ID">
+        </div>
+        <div>
+          <label for="settings_status_channel">Status Channel ID</label>
+          <input id="settings_status_channel" value="${escapeHTML(data.discord_channel_id || "")}" placeholder="Channel for status embed">
+        </div>
+        <div>
+          <label for="settings_log_channel">Log Channel ID</label>
+          <input id="settings_log_channel" value="${escapeHTML(data.discord_log_channel_id || "")}" placeholder="Channel for event notifications">
+        </div>
+      </div>
+
+      <div class="settings-panel" data-panel="ip">
+        <div class="settings-subsection">
+          <div class="settings-subsection-header">
+            <label class="checkbox-label">
+              <input type="checkbox" id="settings_whitelist_enabled" ${whitelistEnabled ? "checked" : ""}>
+              <span class="section-title-inline">Whitelist Mode</span>
+            </label>
+          </div>
+          <p class="modal-note">When enabled, only IPs/CIDRs in the whitelist are allowed — all other traffic is ignored. The blacklist and community lists are disabled while whitelist mode is active.</p>
+          <div>
+            <label for="settings_whitelist">Allowed IP Patterns (one per line)</label>
+            <textarea id="settings_whitelist" rows="5" placeholder="192.168.1.0/24&#10;203.0.113.5/32&#10;# Lines starting with # are ignored">${escapeHTML(data.whitelist || "")}</textarea>
+          </div>
+        </div>
+
+        <div class="settings-subsection" id="blacklist_section">
+          <div class="settings-subsection-header">
+            <div class="section-title">Manual Blacklist</div>
+          </div>
+          <div>
+            <label for="settings_blacklist">Ignored IP Patterns (one per line)</label>
+            <textarea id="settings_blacklist" rows="5" placeholder="23.111.14.183/32&#10;10.0.0.0/8&#10;# Lines starting with # are ignored">${escapeHTML(data.blacklist || "")}</textarea>
+            <p class="modal-note">Packets from these IPs/subnets will be silently dropped. Supports CIDR notation and bare IPs. One entry per line.</p>
+          </div>
+
+          <div class="settings-subsection">
+            <div class="settings-subsection-header">
+              <div class="section-title">Community Blocklists</div>
+            </div>
+            <p class="modal-note">Enable public blocklists to automatically ignore traffic from known datacenter/cloud/scanner ranges. These are fetched server-side and merged with your manual blacklist.</p>
+            <div class="community-lists-container">
+              ${communityLists}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="modal-actions">
@@ -726,6 +805,35 @@ function renderSettingsModal(data) {
       <p id="settingsMsg" class="modal-note"></p>
     </div>
   `;
+
+  // Tab switching
+  modalBody.querySelectorAll(".settings-tab").forEach((tab) => {
+    tab.onclick = () => {
+      modalBody
+        .querySelectorAll(".settings-tab")
+        .forEach((t) => t.classList.remove("active"));
+      modalBody
+        .querySelectorAll(".settings-panel")
+        .forEach((p) => p.classList.remove("active"));
+      tab.classList.add("active");
+      modalBody
+        .querySelector(`[data-panel="${tab.dataset.tab}"]`)
+        .classList.add("active");
+    };
+  });
+
+  // Whitelist toggle: grey out blacklist section when enabled
+  const wlCheckbox = modalBody.querySelector("#settings_whitelist_enabled");
+  const blacklistSection = modalBody.querySelector("#blacklist_section");
+  const updateWhitelistUI = () => {
+    if (wlCheckbox.checked) {
+      blacklistSection.classList.add("disabled-section");
+    } else {
+      blacklistSection.classList.remove("disabled-section");
+    }
+  };
+  wlCheckbox.onchange = updateWhitelistUI;
+  updateWhitelistUI();
 
   modalBody.querySelector("#settingsCancelBtn").onclick = () => closeModal();
   modalBody.querySelector("#settingsSaveBtn").onclick = saveSettings;
@@ -766,6 +874,12 @@ async function saveSettings() {
       .querySelector("#settings_log_channel")
       .value.trim(),
     blacklist: modalBody.querySelector("#settings_blacklist").value,
+    whitelist: modalBody.querySelector("#settings_whitelist").value,
+    whitelist_enabled: modalBody.querySelector("#settings_whitelist_enabled")
+      .checked,
+    community_lists: Array.from(
+      modalBody.querySelectorAll(".community-list-checkbox:checked"),
+    ).map((cb) => cb.dataset.listId),
   };
 
   const saveBtn = modalBody.querySelector("#settingsSaveBtn");
@@ -954,7 +1068,7 @@ let logWs = null;
 let statsPollTimer = null;
 
 function openLogViewer(id, card) {
-  const name = card.querySelector(".name").textContent;
+  const name = cardName(card);
   logModalTitle.textContent = `Logs - ${name}`;
   logOutput.innerHTML = '<div class="loading">Connecting...</div>';
   statsBar.innerHTML = "";
@@ -1033,7 +1147,7 @@ logModal.addEventListener("click", (e) => {
 // Opens the log modal and displays per-server state-change log entries
 // fetched from the /api/server-logs/{id} endpoint.
 function openStateLogViewer(id, card) {
-  const name = card.querySelector(".name").textContent;
+  const name = cardName(card);
   logModalTitle.textContent = `State Logs - ${name}`;
   statsBar.innerHTML = "";
   logOutput.innerHTML = '<div class="loading">Loading state logs...</div>';
@@ -1072,7 +1186,7 @@ function openStateLogViewer(id, card) {
 // Opens the log modal and displays wake-on-connect events and known clients
 // for a specific container, fetched from /api/traffic and /api/clients.
 function openTrafficViewer(id, card) {
-  const name = card.querySelector(".name").textContent;
+  const name = cardName(card);
   logModalTitle.textContent = `Traffic - ${name}`;
   statsBar.innerHTML = "";
   logOutput.innerHTML = '<div class="loading">Loading traffic data...</div>';
@@ -1101,38 +1215,27 @@ function openTrafficViewer(id, card) {
       // Known clients section.
       if (clients.length > 0) {
         html += '<div class="traffic-section-title">Known Clients</div>';
-        html += '<table class="traffic-table"><thead><tr>';
-        html +=
-          "<th>Source IP</th><th>Last Port</th><th>Packets</th><th>First Seen</th><th>Last Seen</th><th>Status</th>";
-        html += "</tr></thead><tbody>";
-        clients.forEach((c) => {
-          const firstSeen = new Date(c.first_seen).toLocaleString();
-          const lastSeen = timeAgo(new Date(c.last_seen));
-          const blockedTag = c.blocked
-            ? '<span class="badge-blocked">Blocked</span>'
-            : "—";
-          html += `<tr><td>${escapeHTML(c.src_ip)}</td><td>${c.last_port || "—"}</td>`;
-          html += `<td>${c.pkt_count}</td><td>${firstSeen}</td><td>${lastSeen}</td><td>${blockedTag}</td></tr>`;
-        });
-        html += "</tbody></table>";
+        const [active, blocked] = splitByBlocked(clients);
+        html += renderClientTable(active);
+        if (blocked.length > 0) {
+          html += renderCollapsible(
+            `Blocked (${blocked.length})`,
+            renderClientTable(blocked),
+          );
+        }
       }
 
       // Recent wake events section.
       if (wakes.length > 0) {
         html += '<div class="traffic-section-title">Recent Wake Events</div>';
-        html += '<table class="traffic-table"><thead><tr>';
-        html +=
-          "<th>Time</th><th>Source IP</th><th>Dst Port</th><th>Protocol</th><th>Status</th>";
-        html += "</tr></thead><tbody>";
-        wakes.forEach((w) => {
-          const ts = new Date(w.timestamp).toLocaleString();
-          const blockedTag = w.blocked
-            ? '<span class="badge-blocked">Blocked</span>'
-            : "—";
-          html += `<tr><td>${ts}</td><td>${escapeHTML(w.src_ip)}</td>`;
-          html += `<td>${w.dst_port}</td><td>${escapeHTML(w.protocol)}</td><td>${blockedTag}</td></tr>`;
-        });
-        html += "</tbody></table>";
+        const [active, blocked] = splitByBlocked(wakes);
+        html += renderWakeTable(active);
+        if (blocked.length > 0) {
+          html += renderCollapsible(
+            `Blocked (${blocked.length})`,
+            renderWakeTable(blocked),
+          );
+        }
       }
 
       logOutput.innerHTML = html;
@@ -1140,6 +1243,64 @@ function openTrafficViewer(id, card) {
     .catch((e) => {
       logOutput.innerHTML = `<div class="loading">Failed to load traffic data: ${e.message}</div>`;
     });
+}
+
+// splitByBlocked partitions an array of traffic/client entries into
+// [active, blocked] based on the boolean `blocked` field.
+function splitByBlocked(entries) {
+  const active = [];
+  const blocked = [];
+  for (const e of entries) {
+    if (e.blocked) blocked.push(e);
+    else active.push(e);
+  }
+  return [active, blocked];
+}
+
+// renderCollapsible wraps content in a <details> element so Blocked entries
+// stay collapsed by default and can be expanded on demand (issue #7).
+function renderCollapsible(summary, content) {
+  return `<details class="traffic-collapsible">
+    <summary>${escapeHTML(summary)}</summary>
+    ${content}
+  </details>`;
+}
+
+function renderClientTable(clients) {
+  if (clients.length === 0) return "";
+  let html = '<table class="traffic-table"><thead><tr>';
+  html +=
+    "<th>Source IP</th><th>Last Port</th><th>Packets</th><th>First Seen</th><th>Last Seen</th><th>Status</th>";
+  html += "</tr></thead><tbody>";
+  clients.forEach((c) => {
+    const firstSeen = new Date(c.first_seen).toLocaleString();
+    const lastSeen = timeAgo(new Date(c.last_seen));
+    const blockedTag = c.blocked
+      ? '<span class="badge-blocked">Blocked</span>'
+      : "—";
+    html += `<tr><td>${escapeHTML(c.src_ip)}</td><td>${c.last_port || "—"}</td>`;
+    html += `<td>${c.pkt_count}</td><td>${firstSeen}</td><td>${lastSeen}</td><td>${blockedTag}</td></tr>`;
+  });
+  html += "</tbody></table>";
+  return html;
+}
+
+function renderWakeTable(wakes) {
+  if (wakes.length === 0) return "";
+  let html = '<table class="traffic-table"><thead><tr>';
+  html +=
+    "<th>Time</th><th>Source IP</th><th>Dst Port</th><th>Protocol</th><th>Status</th>";
+  html += "</tr></thead><tbody>";
+  wakes.forEach((w) => {
+    const ts = new Date(w.timestamp).toLocaleString();
+    const blockedTag = w.blocked
+      ? '<span class="badge-blocked">Blocked</span>'
+      : "—";
+    html += `<tr><td>${ts}</td><td>${escapeHTML(w.src_ip)}</td>`;
+    html += `<td>${w.dst_port}</td><td>${escapeHTML(w.protocol)}</td><td>${blockedTag}</td></tr>`;
+  });
+  html += "</tbody></table>";
+  return html;
 }
 
 // ── Init ──

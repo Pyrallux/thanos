@@ -103,15 +103,20 @@ func (s *Server) handleContainers(w http.ResponseWriter, r *http.Request) {
 		if !c.StartedAt.IsZero() {
 			lastStarted = c.StartedAt.Format(time.RFC3339)
 		}
+		lastOnline := ""
+		if !c.LastOnlineAt.IsZero() {
+			lastOnline = c.LastOnlineAt.Format(time.RFC3339)
+		}
 		out = append(out, map[string]any{
-			"id":            c.ID,
-			"name":          c.Name,
-			"display_name":  c.DisplayName,
-			"state":         string(c.State),
-			"ports":         c.Ports,
-			"snap_timeout":   c.SnapTimeout,
-			"last_started":   lastStarted,
-			"last_traffic":   lastTraffic,
+			"id":           c.ID,
+			"name":         c.Name,
+			"display_name": c.DisplayName,
+			"state":        string(c.State),
+			"ports":        c.Ports,
+			"snap_timeout": c.SnapTimeout,
+			"last_started": lastStarted,
+			"last_traffic": lastTraffic,
+			"last_online":  lastOnline,
 		})
 	}
 
@@ -177,10 +182,10 @@ func (s *Server) handleAllContainers(w http.ResponseWriter, r *http.Request) {
 	for _, c := range all {
 		labels := docker.ParseLabels(c)
 		out = append(out, map[string]any{
-			"id":          c.ID,
-			"name":        safeContainerName(c.Names),
-			"image":        c.Image,
-			"state":        string(c.State),
+			"id":             c.ID,
+			"name":           safeContainerName(c.Names),
+			"image":          c.Image,
+			"state":          string(c.State),
 			"thanos_enabled": labels.Enabled,
 			"snap_timeout":   labels.SnapTimeout,
 			"display_name":   labels.DisplayName,
@@ -417,13 +422,16 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"username":           s.cfg.WebUsername,
-			"network_interface":  s.cfg.NetworkInterface,
-			"interfaces":         interfaces,
-			"discord_guild_id":    s.cfg.DiscordGuildID,
-			"discord_channel_id":  s.cfg.DiscordChannelID,
+			"username":               s.cfg.WebUsername,
+			"network_interface":      s.cfg.NetworkInterface,
+			"interfaces":             interfaces,
+			"discord_guild_id":       s.cfg.DiscordGuildID,
+			"discord_channel_id":     s.cfg.DiscordChannelID,
 			"discord_log_channel_id": s.cfg.DiscordLogChannelID,
-			"blacklist":          s.cfg.BlacklistString(),
+			"blacklist":              s.cfg.BlacklistString(),
+			"whitelist":              s.cfg.WhitelistString(),
+			"whitelist_enabled":     s.cfg.WhitelistEnabled,
+			"community_lists":       s.cfg.CommunityListsResponse(),
 		})
 		return
 	case http.MethodPost:
@@ -433,14 +441,17 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Username           string `json:"username"`
-		Password           string `json:"password"`
-		ConfirmPassword    string `json:"confirm_password"`
-		NetworkInterface   string `json:"network_interface"`
+		Username            string `json:"username"`
+		Password            string `json:"password"`
+		ConfirmPassword     string `json:"confirm_password"`
+		NetworkInterface    string `json:"network_interface"`
 		DiscordGuildID      string `json:"discord_guild_id"`
 		DiscordChannelID    string `json:"discord_channel_id"`
 		DiscordLogChannelID string `json:"discord_log_channel_id"`
-		Blacklist          string `json:"blacklist"`
+		Blacklist           string `json:"blacklist"`
+		Whitelist           string `json:"whitelist"`
+		WhitelistEnabled    bool   `json:"whitelist_enabled"`
+		CommunityLists      []string `json:"community_lists"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -500,6 +511,22 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	if err := s.cfg.SaveBlacklist(req.Blacklist); err != nil {
 		slog.Warn("failed to save blacklist", "err", err)
 		warnings = append(warnings, fmt.Sprintf("blacklist: %v", err))
+	}
+
+	// Save whitelist (CIDR patterns, one per line).
+	if err := s.cfg.SaveWhitelist(req.Whitelist); err != nil {
+		slog.Warn("failed to save whitelist", "err", err)
+		warnings = append(warnings, fmt.Sprintf("whitelist: %v", err))
+	}
+	if err := s.cfg.SaveWhitelistEnabled(req.WhitelistEnabled); err != nil {
+		slog.Warn("failed to save whitelist_enabled", "err", err)
+		warnings = append(warnings, fmt.Sprintf("whitelist_enabled: %v", err))
+	}
+
+	// Save community blocklist selections (fetches lists if changed).
+	if err := s.cfg.SaveCommunityLists(req.CommunityLists); err != nil {
+		slog.Warn("failed to save community lists", "err", err)
+		warnings = append(warnings, fmt.Sprintf("community_lists: %v", err))
 	}
 
 	if err := s.cfg.SaveWebAuth(); err != nil {

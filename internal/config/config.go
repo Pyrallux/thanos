@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -39,6 +42,18 @@ type Config struct {
 	// IP blacklist (newline-separated CIDR patterns, e.g. "23.111.14.183/32")
 	Blacklist     []netip.Prefix
 	blacklistRaw  string
+
+	// IP whitelist — when enabled, only these IPs/CIDRs are allowed.
+	Whitelist      []netip.Prefix
+	whitelistRaw   string
+	WhitelistEnabled bool
+
+	// Community blocklists — IDs that are enabled, and the merged prefixes.
+	CommunityLists     map[string]bool
+	communityBlacklist []netip.Prefix // cached merged result
+
+	// mu protects communityBlacklist, CommunityLists, whitelist fields.
+	mu sync.RWMutex
 }
 
 // Defaults applied when a key is missing from the DB on first load.
@@ -47,6 +62,9 @@ var defaults = map[string]string{
 	"log_level":         "info",
 	"api_port":           "4040",
 }
+
+// httpClient is a shared client for community list downloads.
+var httpClient = http.Client{Timeout: 30 * time.Second}
 
 // NetworkInterfaceInfo describes an OS network interface for the setup and
 // settings screens.
@@ -104,7 +122,12 @@ func Load(ctx context.Context) (*Config, error) {
 		return cfg, nil
 	}
 
-	return loadConfig(db)
+	cfg, err := loadConfig(db)
+	if err != nil {
+		return nil, err
+	}
+	cfg.RefreshCommunityLists()
+	return cfg, nil
 }
 
 // isFirstRun returns true when the web_ui_config table has no real
@@ -157,6 +180,10 @@ func loadConfig(db *sql.DB) (*Config, error) {
 	cfg.DiscordLogChannelID = kv["discord_log_channel_id"]
 	cfg.Blacklist = parseBlacklist(kv["blacklist"])
 	cfg.blacklistRaw = kv["blacklist"]
+	cfg.Whitelist = parseBlacklist(kv["whitelist"])
+	cfg.whitelistRaw = kv["whitelist"]
+	cfg.WhitelistEnabled = kv["whitelist_enabled"] == "true"
+	cfg.CommunityLists = parseCommunityListConfig(kv["community_lists"])
 
 	// Discord — columns may be NULL on first run before setup wizard runs.
 	var dBotToken, dGuildID, dChannelID, dStatusMsgID sql.NullString
@@ -323,14 +350,104 @@ func (c *Config) SaveBlacklist(raw string) error {
 	if err := c.SaveKV("blacklist", raw); err != nil {
 		return err
 	}
+	c.mu.Lock()
 	c.Blacklist = parseBlacklist(raw)
 	c.blacklistRaw = raw
+	c.mu.Unlock()
 	return nil
 }
 
 // BlacklistString returns the raw blacklist text for the settings UI.
 func (c *Config) BlacklistString() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.blacklistRaw
+}
+
+// SaveWhitelist persists the whitelist (raw text) and updates the in-memory list.
+func (c *Config) SaveWhitelist(raw string) error {
+	if err := c.SaveKV("whitelist", raw); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.Whitelist = parseBlacklist(raw)
+	c.whitelistRaw = raw
+	c.mu.Unlock()
+	return nil
+}
+
+// WhitelistString returns the raw whitelist text for the settings UI.
+func (c *Config) WhitelistString() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.whitelistRaw
+}
+
+// SaveWhitelistEnabled persists the whitelist enabled flag.
+func (c *Config) SaveWhitelistEnabled(enabled bool) error {
+	val := "false"
+	if enabled {
+		val = "true"
+	}
+	if err := c.SaveKV("whitelist_enabled", val); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.WhitelistEnabled = enabled
+	c.mu.Unlock()
+	return nil
+}
+
+// SaveCommunityLists persists the enabled community list IDs and fetches them.
+func (c *Config) SaveCommunityLists(ids []string) error {
+	val := strings.Join(ids, ",")
+	if err := c.SaveKV("community_lists", val); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.CommunityLists = parseCommunityListConfig(val)
+	c.mu.Unlock()
+	c.RefreshCommunityLists()
+	return nil
+}
+
+// CommunityListsResponse returns the available lists and their enabled state for the UI.
+func (c *Config) CommunityListsResponse() []map[string]any {
+	c.mu.RLock()
+	enabled := c.CommunityLists
+	c.mu.RUnlock()
+	out := make([]map[string]any, 0, len(AvailableCommunityLists))
+	for _, l := range AvailableCommunityLists {
+		out = append(out, map[string]any{
+			"id":          l.ID,
+			"name":        l.Name,
+			"description": l.Description,
+			"source_url":  l.SourceURL,
+			"info_url":    l.InfoURL,
+			"enabled":     enabled[l.ID],
+		})
+	}
+	return out
+}
+
+// parseCommunityListConfig parses the comma-separated list of enabled community list IDs.
+func parseCommunityListConfig(raw string) map[string]bool {
+	m := make(map[string]bool)
+	if raw == "" {
+		return m
+	}
+	for _, id := range strings.Split(raw, ",") {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			m[id] = true
+		}
+	}
+	return m
+}
+
+// fmtCIDR formats an addr/bits pair as a CIDR string.
+func fmtCIDR(addr netip.Addr, bits int) string {
+	return fmt.Sprintf("%s/%d", addr.String(), bits)
 }
 
 // parseBlacklist parses newline-separated CIDR entries into a list of netip prefixes.
@@ -364,13 +481,37 @@ func parseBlacklist(raw string) []netip.Prefix {
 	return list
 }
 
-// IsBlacklisted checks whether an IP address matches any blacklist entry.
+// IsBlacklisted checks whether an IP address should be ignored (blocked).
+// When whitelist mode is enabled, only IPs in the whitelist are allowed —
+// everything else is "blacklisted." When whitelist is disabled, an IP is
+// blacklisted if it matches the manual blacklist OR any enabled community list.
 func (c *Config) IsBlacklisted(ip string) bool {
 	addr, err := netip.ParseAddr(ip)
 	if err != nil {
 		return false
 	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	// Whitelist mode: only allow IPs in the whitelist.
+	if c.WhitelistEnabled {
+		for _, p := range c.Whitelist {
+			if p.Contains(addr) {
+				return false // explicitly allowed
+			}
+		}
+		return true // not in whitelist → blocked
+	}
+
+	// Blacklist mode: check manual blacklist.
 	for _, p := range c.Blacklist {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	// Check community blocklists.
+	for _, p := range c.communityBlacklist {
 		if p.Contains(addr) {
 			return true
 		}

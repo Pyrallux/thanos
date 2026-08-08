@@ -64,25 +64,26 @@ Write-Host "Copying to $InstallDir..." -ForegroundColor Yellow
 Copy-Item $exe $InstallDir -Force -ErrorAction Stop
 Write-Host "Deployed thanos.exe to $InstallDir" -ForegroundColor Green
 
-# Copy thanos.db (and WAL/SHM sidecar files) from the project root so
-# credentials and config are preserved across deploys. SQLite stores recent
-# writes in the -wal file, so all three must be copied together.
+# Copy thanos.db from the project root ONLY if the install directory
+# doesn't already have one. The production DB (in $InstallDir) is the
+# source of truth — it has the live config, credentials, and blacklist.
+# Overwriting it with the project-root DB would wipe user settings.
 $srcDb = Join-Path $root "thanos.db"
 $dstDb = Join-Path $InstallDir "thanos.db"
-if (Test-Path $srcDb) {
-    Write-Host "Copying thanos.db..." -ForegroundColor Yellow
-    # Stop any process that might hold the db open.
-    Get-Process thanos* -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
-    Start-Sleep -Seconds 1
+if ((Test-Path $srcDb) -and -not (Test-Path $dstDb)) {
+    Write-Host "Copying thanos.db (first deploy)..." -ForegroundColor Yellow
     Copy-Item $srcDb $dstDb -Force -ErrorAction Stop
-    # Copy WAL and SHM sidecar files if they exist.
     foreach ($ext in @("-wal", "-shm")) {
         $sidecar = Join-Path $root "thanos.db$ext"
         if (Test-Path $sidecar) {
             Copy-Item $sidecar (Join-Path $InstallDir "thanos.db$ext") -Force -ErrorAction SilentlyContinue
         }
     }
-    Write-Host "Updated thanos.db" -ForegroundColor Green
+    Write-Host "Initialized thanos.db" -ForegroundColor Green
+} elseif (Test-Path $dstDb) {
+    Write-Host "Preserving existing thanos.db in $InstallDir" -ForegroundColor DarkGray
+} else {
+    Write-Host "No thanos.db found -- will be created on first run." -ForegroundColor DarkGray
 }
 
 # 4. Start the service (if it was installed).
