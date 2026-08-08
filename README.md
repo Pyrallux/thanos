@@ -13,7 +13,7 @@ Thanos is a layer on top of standard Docker. It never proxies or intercepts netw
 - **Wake-on-connect** — BPF packet sniffer detects inbound TCP SYN / UDP to your server ports and starts the container automatically
 - **Idle snap** — Stops containers after a configurable inactivity timeout (e.g. 15 minutes with no traffic)
 - **Web dashboard** — Browser-based UI for starting/stopping servers, viewing Docker logs, state logs, and traffic history; editing per-server settings; accessible over your LAN
-- **Discord integration** — Persistent status embed with per-server state emojis, slash commands (`/start`, `/stop`, `/status`, `/config`), and event notifications (wake, idle shutdown, crash)
+- **Discord integration** — Persistent status embed with per-server state emojis, slash commands (`/start`, `/stop`, `/status`, `/config`), event notifications (wake, idle shutdown, crash), and a dynamic bot presence ("Playing ...") that reflects which servers are online
 - **Crash detection** — Unexpected container exits are flagged as crashed (not silently restarted) to protect save data
 - **IP blacklist** — CIDR patterns block unwanted IPs from waking or resetting idle timers; blocked traffic is still logged for visibility
 - **Traffic logging** — Every connection event is logged with source IP, port, and protocol; known client IPs are tracked per server; blacklisted IPs are flagged and ignored (no wake, no idle reset)
