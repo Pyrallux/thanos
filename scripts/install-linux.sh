@@ -20,7 +20,7 @@ if [ ! -f "$BINARY" ]; then
     echo "thanos binary not found. Building from source..."
     cd "$PROJECT_DIR"
     VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
-    CGO_ENABLED=1 go build -ldflags "-X thanos/internal/version.version=$VERSION" -o thanos ./cmd/thanos
+    CGO_ENABLED=1 go build -ldflags "-X thanos/internal/version.Version=$VERSION" -o thanos ./cmd/thanos
 fi
 
 # 2. Copy binary

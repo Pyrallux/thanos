@@ -50,5 +50,5 @@ function Get-ThanosVersion {
 # Builds the ldflags string that injects the version into the binary.
 function Get-ThanosLdFlags {
     $v = Get-ThanosVersion
-    return "-X thanos/internal/version.version=$v"
+    return "-X thanos/internal/version.Version=$v"
 }
