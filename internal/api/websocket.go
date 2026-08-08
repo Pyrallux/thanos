@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/gorilla/websocket"
 )
 
@@ -18,6 +20,25 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true
 	},
+}
+
+// startPingLoop sends periodic WebSocket pings to detect disconnected
+// clients. It cancels the given context when a ping fails so the stream
+// handler can shut down.
+func startPingLoop(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				cancel()
+				return
+			}
+		}
+	}
 }
 
 // handleLogStream upgrades to a WebSocket and streams Docker logs for the
@@ -49,35 +70,24 @@ func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rc.Close()
 
-	// Docker log streams use a multiplexed format with an 8-byte header
-	// per frame. We use bufio to read lines for simplicity — the Docker
-	// SDK returns raw bytes that may include the header prefix.
-	scanner := bufio.NewScanner(rc)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-	// Ping goroutine to detect disconnected clients.
+	// Docker log streams use a multiplexed binary format with an 8-byte
+	// header per frame. StdCopy demultiplexes stdout/stderr into plain
+	// text, so we can read clean lines without manual header stripping.
+	// Both streams are merged into a single pipe; the stream type byte is
+	// not preserved, which matches the previous behavior.
+	pr, pw := io.Pipe()
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-					cancel()
-					return
-				}
-			}
-		}
+		_, _ = stdcopy.StdCopy(pw, pw, rc)
+		_ = pw.Close()
 	}()
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		// Docker multiplexed streams have an 8-byte header prefix.
-		// Strip non-printable header bytes if present.
-		line = stripDockerHeader(line)
+	go startPingLoop(ctx, cancel, conn)
 
+	scanner := bufio.NewScanner(pr)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
@@ -93,25 +103,6 @@ func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
 	if err := scanner.Err(); err != nil {
 		slog.Debug("log stream scanner ended", "err", err)
 	}
-}
-
-// stripDockerHeader removes the 8-byte multiplexed stream header that Docker
-// prepends to each log line when using the hijacked connection format.
-// The header is: 1 byte stream type (0x01=stdout, 0x02=stderr) + 3 bytes
-// padding (0x00) + 4 bytes big-endian payload length.
-func stripDockerHeader(line string) string {
-	if len(line) < 8 {
-		return strings.TrimSpace(line)
-	}
-	// Check for known Docker stream type bytes in the first position.
-	streamType := line[0]
-	if streamType == 0x01 || streamType == 0x02 {
-		// Bytes 1-3 must be padding (0x00) for a valid Docker header.
-		if line[1] == 0x00 && line[2] == 0x00 && line[3] == 0x00 {
-			return strings.TrimSpace(line[8:])
-		}
-	}
-	return strings.TrimSpace(line)
 }
 
 // handleStatsStream upgrades to a WebSocket and streams Docker resource stats
@@ -145,22 +136,7 @@ func (s *Server) handleStatsStream(w http.ResponseWriter, r *http.Request) {
 
 	decoder := json.NewDecoder(rc.Body)
 
-	// Ping goroutine to detect disconnected clients.
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-					cancel()
-					return
-				}
-			}
-		}
-	}()
+	go startPingLoop(ctx, cancel, conn)
 
 	for {
 		var stats container.StatsResponse

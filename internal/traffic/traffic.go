@@ -75,30 +75,19 @@ func (l *Logger) LogTraffic(containerID, containerName, srcIP string, dstPort in
 // The blocked flag reflects the current blacklist state: true → blocked=1,
 // false → blocked=0 (clears a previously blocked IP if removed from blacklist).
 func (l *Logger) upsertClient(containerID, containerName, srcIP string, dstPort int, blocked bool) {
+	blockedInt := 0
 	if blocked {
-		_, err := l.db.Exec(
-			`INSERT INTO known_clients (container_id, src_ip, container_name, last_port, last_seen, pkt_count, blocked)
-			 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 1, 1)
-			 ON CONFLICT(container_id, src_ip) DO UPDATE SET
-			   last_port = excluded.last_port,
-			   last_seen = excluded.last_seen,
-			   pkt_count = known_clients.pkt_count + 1,
-			   blocked = 1`,
-			containerID, srcIP, containerName, dstPort)
-		if err != nil {
-			slog.Warn("traffic: failed to upsert known_clients", "container", containerName, "ip", srcIP, "err", err)
-		}
-		return
+		blockedInt = 1
 	}
 	_, err := l.db.Exec(
 		`INSERT INTO known_clients (container_id, src_ip, container_name, last_port, last_seen, pkt_count, blocked)
-		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 1, 0)
+		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 1, ?)
 		 ON CONFLICT(container_id, src_ip) DO UPDATE SET
 		   last_port = excluded.last_port,
 		   last_seen = excluded.last_seen,
 		   pkt_count = known_clients.pkt_count + 1,
-		   blocked = 0`,
-		containerID, srcIP, containerName, dstPort)
+		   blocked = excluded.blocked`,
+		containerID, srcIP, containerName, dstPort, blockedInt)
 	if err != nil {
 		slog.Warn("traffic: failed to upsert known_clients", "container", containerName, "ip", srcIP, "err", err)
 	}

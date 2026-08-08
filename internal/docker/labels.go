@@ -9,22 +9,16 @@ import (
 
 // Label keys defined by the Thanos spec.
 const (
-	LabelEnabled           = "thanos.enabled"
-	LabelSnapTimeout       = "thanos.snap_timeout"
-	LabelKeepRunningOnBoot = "thanos.keep_running_on_boot"
-	LabelDisplayName       = "thanos.display_name"
-	LabelNotifyDiscord      = "thanos.notify_discord"
-	LabelCrashDetection    = "thanos.crash_detection"
+	LabelEnabled     = "thanos.enabled"
+	LabelSnapTimeout = "thanos.snap_timeout"
+	LabelDisplayName = "thanos.display_name"
 )
 
 // Labels holds the parsed Thanos configuration for a single container.
 type Labels struct {
-	Enabled           bool
-	SnapTimeout       int  // seconds (converted from hours in the label); 0 = never auto-shutdown
-	KeepRunningOnBoot bool
-	DisplayName       string
-	NotifyDiscord     bool
-	CrashDetection    bool
+	Enabled     bool
+	SnapTimeout int // seconds (converted from hours in the label); 0 = never auto-shutdown
+	DisplayName string
 }
 
 // DefaultSnapTimeoutHours is the default snap timeout in hours.
@@ -41,23 +35,14 @@ func ParseLabels(c container.Summary) Labels {
 // and converted to seconds internally.
 func ParseLabelMap(m map[string]string) Labels {
 	l := Labels{
-		Enabled:           strings.EqualFold(m[LabelEnabled], "true"),
-		SnapTimeout:       int(DefaultSnapTimeoutHours * 3600),
-		KeepRunningOnBoot: strings.EqualFold(m[LabelKeepRunningOnBoot], "true"),
-		DisplayName:       m[LabelDisplayName],
-		NotifyDiscord:     true,
-		CrashDetection:    true,
+		Enabled:     strings.EqualFold(m[LabelEnabled], "true"),
+		SnapTimeout: int(DefaultSnapTimeoutHours * 3600),
+		DisplayName: m[LabelDisplayName],
 	}
 	if v := m[LabelSnapTimeout]; v != "" {
 		if n, err := strconv.ParseFloat(v, 64); err == nil {
 			l.SnapTimeout = int(n * 3600) // convert hours to seconds
 		}
-	}
-	if v := m[LabelNotifyDiscord]; v != "" {
-		l.NotifyDiscord = strings.EqualFold(v, "true")
-	}
-	if v := m[LabelCrashDetection]; v != "" {
-		l.CrashDetection = strings.EqualFold(v, "true")
 	}
 	return l
 }

@@ -251,14 +251,6 @@ CREATE TABLE IF NOT EXISTS container_state (
     last_stop_time DATETIME
 );
 
-CREATE TABLE IF NOT EXISTS event_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    container_id TEXT,
-    event_type TEXT NOT NULL,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    details TEXT
-);
-
 -- Per-server state-change log (replaces the server-logs/ text files).
 CREATE TABLE IF NOT EXISTS server_log (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
