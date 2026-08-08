@@ -21,9 +21,17 @@ type Sentinel struct {
 	tlog *traffic.Logger
 
 	mu            sync.RWMutex
-	watchedPorts  map[int]string // dstPort → containerID (for dormant containers)
-	runningPorts  map[int]string // port → containerID (for running containers, idle reset)
+	watchedPorts  map[int]watchedPort // dstPort → watch spec (for dormant containers)
+	runningPorts  map[int]watchedPort // port → watch spec (for running containers, idle reset)
 	captureCancel context.CancelFunc
+}
+
+// watchedPort describes which protocols should trigger a container on a
+// given host port. Both default to true (watch everything).
+type watchedPort struct {
+	containerID string
+	tcp         bool
+	udp         bool
 }
 
 // New creates a Sentinel. It does not open the capture handle until Run is
@@ -33,8 +41,8 @@ func New(cfg *config.Config, orch *orchestrator.Orchestrator, tlog *traffic.Logg
 		cfg:          cfg,
 		orch:         orch,
 		tlog:         tlog,
-		watchedPorts: make(map[int]string),
-		runningPorts: make(map[int]string),
+		watchedPorts: make(map[int]watchedPort),
+		runningPorts: make(map[int]watchedPort),
 	}, nil
 }
 
@@ -118,15 +126,20 @@ func (s *Sentinel) clearCaptureCancel() {
 // transitions to running, we remove its ports from the watched set and add
 // them to the running set (for idle traffic monitoring).
 func (s *Sentinel) OnStateChange(ci *orchestrator.ContainerInfo) {
+	wp := watchedPort{
+		containerID: ci.ID,
+		tcp:         ci.Labels.WatchTCP,
+		udp:         ci.Labels.WatchUDP,
+	}
 	switch ci.State {
 	case orchestrator.StateDormant:
 		// Add this container's ports to the watched set (for wake-on-connect).
 		// Remove from running set.
 		s.mu.Lock()
 		for _, p := range ci.Ports {
-			s.watchedPorts[p] = ci.ID
+			s.watchedPorts[p] = wp
 			delete(s.runningPorts, p)
-			slog.Info("watching port for dormant container", "port", p, "container", ci.DisplayName)
+			slog.Info("watching port for dormant container", "port", p, "container", ci.DisplayName, "tcp", wp.tcp, "udp", wp.udp)
 		}
 		s.mu.Unlock()
 	case orchestrator.StateRunning:
@@ -134,7 +147,7 @@ func (s *Sentinel) OnStateChange(ci *orchestrator.ContainerInfo) {
 		s.mu.Lock()
 		for _, p := range ci.Ports {
 			delete(s.watchedPorts, p)
-			s.runningPorts[p] = ci.ID
+			s.runningPorts[p] = wp
 		}
 		s.mu.Unlock()
 	case orchestrator.StateStarting, orchestrator.StateStopping:
@@ -149,7 +162,7 @@ func (s *Sentinel) OnStateChange(ci *orchestrator.ContainerInfo) {
 		// Crashed containers are stopped, so watch their ports for wake.
 		s.mu.Lock()
 		for _, p := range ci.Ports {
-			s.watchedPorts[p] = ci.ID
+			s.watchedPorts[p] = wp
 			delete(s.runningPorts, p)
 		}
 		s.mu.Unlock()

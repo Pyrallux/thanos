@@ -122,8 +122,12 @@ Or use the **Manage Containers** button in the web UI to add/remove labels on ex
 | `thanos.notify_discord`       | `true`  | Send Discord notifications                            |
 | `thanos.crash_detection`      | `true`  | Monitor for unexpected exits                          |
 | `thanos.keep_running_on_boot` | `false` | Keep container running on Thanos startup (don't snap) |
+| `thanos.watch_tcp`            | `true`  | Wake on TCP connections to this server's ports        |
+| `thanos.watch_udp`            | `true`  | Wake on UDP traffic to this server's ports            |
 
 > The `thanos.snap_timeout` label is specified in **hours** (decimals supported, e.g. `0.25` = 15 minutes, `2` = 2 hours).
+>
+> `thanos.watch_tcp` / `thanos.watch_udp` control which protocols trigger wake-on-connect and idle-timer resets for a server. Set `thanos.watch_tcp=false` to ignore TCP connections (e.g. for a UDP-only game server), or `thanos.watch_udp=false` to ignore UDP traffic (e.g. to avoid false wake-ups from UDP broadcasts).
 
 ## Installation
 
