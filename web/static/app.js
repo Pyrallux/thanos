@@ -550,6 +550,10 @@ function showLabelEditorInModal(container) {
         <label for="le_crash_detection">Crash Detection</label>
       </div>
       <div class="label-edit-checkbox-row">
+        <input id="le_wake_on_connect" type="checkbox" checked>
+        <label for="le_wake_on_connect">Wake on LAN (auto-wake on connection)</label>
+      </div>
+      <div class="label-edit-checkbox-row">
         <input id="le_delete_original" type="checkbox" checked>
         <label for="le_delete_original">Delete original container after recreation</label>
       </div>
@@ -567,6 +571,10 @@ function showLabelEditorInModal(container) {
       "thanos.display_name": modalBody.querySelector("#le_display_name").value,
       "thanos.snap_timeout": modalBody.querySelector("#le_snap_timeout").value,
       "thanos.crash_detection": modalBody.querySelector("#le_crash_detection")
+        .checked
+        ? "true"
+        : "false",
+      "thanos.wake_on_connect": modalBody.querySelector("#le_wake_on_connect")
         .checked
         ? "true"
         : "false",
@@ -611,6 +619,7 @@ async function removeFromDashboard(id, card) {
     "thanos.crash_detection": "",
     "thanos.notify_discord": "",
     "thanos.keep_running_on_boot": "",
+    "thanos.wake_on_connect": "",
   };
   try {
     await fetchJSON(`${API}/labels`, {
@@ -980,6 +989,10 @@ function showLabelEditor(container) {
         <label for="le_crash_detection">Crash Detection</label>
       </div>
       <div class="label-edit-checkbox-row">
+        <input id="le_wake_on_connect" type="checkbox" checked>
+        <label for="le_wake_on_connect">Wake on LAN (auto-wake on connection)</label>
+      </div>
+      <div class="label-edit-checkbox-row">
         <input id="le_delete_original" type="checkbox">
         <label for="le_delete_original">Delete original container after recreation</label>
       </div>
@@ -997,6 +1010,9 @@ function showLabelEditor(container) {
       "thanos.display_name": row.querySelector("#le_display_name").value,
       "thanos.snap_timeout": row.querySelector("#le_snap_timeout").value,
       "thanos.crash_detection": row.querySelector("#le_crash_detection").checked
+        ? "true"
+        : "false",
+      "thanos.wake_on_connect": row.querySelector("#le_wake_on_connect").checked
         ? "true"
         : "false",
     };
@@ -1039,6 +1055,7 @@ async function removeThanosLabels(container) {
     "thanos.crash_detection": "",
     "thanos.notify_discord": "",
     "thanos.keep_running_on_boot": "",
+    "thanos.wake_on_connect": "",
   };
   try {
     await fetchJSON(`${API}/labels`, {

@@ -120,13 +120,19 @@ func (s *Sentinel) clearCaptureCancel() {
 func (s *Sentinel) OnStateChange(ci *orchestrator.ContainerInfo) {
 	switch ci.State {
 	case orchestrator.StateDormant:
-		// Add this container's ports to the watched set (for wake-on-connect).
+		// Add this container's ports to the watched set (for wake-on-connect),
+		// unless wake-on-connect is disabled for this server.
 		// Remove from running set.
 		s.mu.Lock()
 		for _, p := range ci.Ports {
-			s.watchedPorts[p] = ci.ID
+			if ci.Labels.WakeOnConnect {
+				s.watchedPorts[p] = ci.ID
+				slog.Info("watching port for dormant container", "port", p, "container", ci.DisplayName)
+			} else {
+				delete(s.watchedPorts, p)
+				slog.Info("wake-on-connect disabled for container, not watching port", "port", p, "container", ci.DisplayName)
+			}
 			delete(s.runningPorts, p)
-			slog.Info("watching port for dormant container", "port", p, "container", ci.DisplayName)
 		}
 		s.mu.Unlock()
 	case orchestrator.StateRunning:
@@ -146,10 +152,15 @@ func (s *Sentinel) OnStateChange(ci *orchestrator.ContainerInfo) {
 		}
 		s.mu.Unlock()
 	case orchestrator.StateCrashed:
-		// Crashed containers are stopped, so watch their ports for wake.
+		// Crashed containers are stopped, so watch their ports for wake
+		// (unless wake-on-connect is disabled for this server).
 		s.mu.Lock()
 		for _, p := range ci.Ports {
-			s.watchedPorts[p] = ci.ID
+			if ci.Labels.WakeOnConnect {
+				s.watchedPorts[p] = ci.ID
+			} else {
+				delete(s.watchedPorts, p)
+			}
 			delete(s.runningPorts, p)
 		}
 		s.mu.Unlock()
