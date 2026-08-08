@@ -122,8 +122,11 @@ Or use the **Manage Containers** button in the web UI to add/remove labels on ex
 | `thanos.notify_discord`       | `true`  | Send Discord notifications                            |
 | `thanos.crash_detection`      | `true`  | Monitor for unexpected exits                          |
 | `thanos.keep_running_on_boot` | `false` | Keep container running on Thanos startup (don't snap) |
+| `thanos.wake_on_connect`      | `true`  | Auto-wake (wake-on-LAN) when traffic hits this server's ports |
 
 > The `thanos.snap_timeout` label is specified in **hours** (decimals supported, e.g. `0.25` = 15 minutes, `2` = 2 hours).
+>
+> Set `thanos.wake_on_connect=false` to disable automatic wake-on-connect for a specific server — it will only start when started manually (Web UI, Discord, or API).
 
 ## Installation
 

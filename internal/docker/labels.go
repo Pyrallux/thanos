@@ -13,18 +13,20 @@ const (
 	LabelSnapTimeout       = "thanos.snap_timeout"
 	LabelKeepRunningOnBoot = "thanos.keep_running_on_boot"
 	LabelDisplayName       = "thanos.display_name"
-	LabelNotifyDiscord      = "thanos.notify_discord"
+	LabelNotifyDiscord     = "thanos.notify_discord"
 	LabelCrashDetection    = "thanos.crash_detection"
+	LabelWakeOnConnect     = "thanos.wake_on_connect"
 )
 
 // Labels holds the parsed Thanos configuration for a single container.
 type Labels struct {
 	Enabled           bool
-	SnapTimeout       int  // seconds (converted from hours in the label); 0 = never auto-shutdown
+	SnapTimeout       int // seconds (converted from hours in the label); 0 = never auto-shutdown
 	KeepRunningOnBoot bool
 	DisplayName       string
 	NotifyDiscord     bool
 	CrashDetection    bool
+	WakeOnConnect     bool // auto-wake (wake-on-LAN) when traffic hits this server's ports
 }
 
 // DefaultSnapTimeoutHours is the default snap timeout in hours.
@@ -47,6 +49,7 @@ func ParseLabelMap(m map[string]string) Labels {
 		DisplayName:       m[LabelDisplayName],
 		NotifyDiscord:     true,
 		CrashDetection:    true,
+		WakeOnConnect:     true,
 	}
 	if v := m[LabelSnapTimeout]; v != "" {
 		if n, err := strconv.ParseFloat(v, 64); err == nil {
@@ -58,6 +61,9 @@ func ParseLabelMap(m map[string]string) Labels {
 	}
 	if v := m[LabelCrashDetection]; v != "" {
 		l.CrashDetection = strings.EqualFold(v, "true")
+	}
+	if v := m[LabelWakeOnConnect]; v != "" {
+		l.WakeOnConnect = strings.EqualFold(v, "true")
 	}
 	return l
 }
